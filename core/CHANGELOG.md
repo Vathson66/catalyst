@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.1
+
+### Patch Changes
+
+- [#1278](https://github.com/bigcommerce/catalyst/pull/1278) [`f8553c6`](https://github.com/bigcommerce/catalyst/commit/f8553c6c9fb35ab7a143fabd60719c8156269448) Thanks [@jorgemoya](https://github.com/jorgemoya)! - Fix wrapping author text in BlogPostCard.
+
 ## 0.14.0
 
 ### Minor Changes
