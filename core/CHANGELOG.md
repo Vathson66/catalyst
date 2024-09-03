@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.14.1
+
+### Patch Changes
+
+- [#1257](https://github.com/bigcommerce/catalyst/pull/1257) [`d656e79`](https://github.com/bigcommerce/catalyst/commit/d656e7981c7516be560b1944e4351916572b7a05) Thanks [@bc-alexsaiannyi](https://github.com/bc-alexsaiannyi)! - add numbers-only field & utils for account form fields
+
+- [#1277](https://github.com/bigcommerce/catalyst/pull/1277) [`8e6253d`](https://github.com/bigcommerce/catalyst/commit/8e6253dbd3048b8318ce502192bc9f07314b3641) Thanks [@jorgemoya](https://github.com/jorgemoya)! - Update Slideshow prop to use altText for image. Rename Hero wrapper component to Slideshow.
+
+- [#1302](https://github.com/bigcommerce/catalyst/pull/1302) [`a620a19`](https://github.com/bigcommerce/catalyst/commit/a620a191d3d30d50d0fa79fc36ad32ee28db8728) Thanks [@deini](https://github.com/deini)! - fix: decode webpage id to fix 404 on some Webpages
+
+- [#1257](https://github.com/bigcommerce/catalyst/pull/1257) [`d656e79`](https://github.com/bigcommerce/catalyst/commit/d656e7981c7516be560b1944e4351916572b7a05) Thanks [@bc-alexsaiannyi](https://github.com/bc-alexsaiannyi)! - add checkboxes field for account & addresses forms
+
+- [#1316](https://github.com/bigcommerce/catalyst/pull/1316) [`4aea109`](https://github.com/bigcommerce/catalyst/commit/4aea109593e7ac060552dca18198e39c0b070e55) Thanks [@jorgemoya](https://github.com/jorgemoya)! - Normalizes translations across all pages, updates the next-intl configuration, and simplifies translation handling in the project.
+
+- [#1257](https://github.com/bigcommerce/catalyst/pull/1257) [`d656e79`](https://github.com/bigcommerce/catalyst/commit/d656e7981c7516be560b1944e4351916572b7a05) Thanks [@bc-alexsaiannyi](https://github.com/bc-alexsaiannyi)! - add dates field for account & address forms
+
+- [#1141](https://github.com/bigcommerce/catalyst/pull/1141) [`9f3c949`](https://github.com/bigcommerce/catalyst/commit/9f3c9492b2d4edcd404cffc92dfcfec6a0afc395) Thanks [@bc-yevhenii-buliuk](https://github.com/bc-yevhenii-buliuk)! - improve redirect behavior after creating new address
+
+- [#1305](https://github.com/bigcommerce/catalyst/pull/1305) [`b11ba3d`](https://github.com/bigcommerce/catalyst/commit/b11ba3d63547d2772a649078274b5b71702c402a) Thanks [@jorgemoya](https://github.com/jorgemoya)! - Refactors tabs in `/account` to each be their own page. This also removes unused links in account home page (and tests) until we have that functionality available.
+
+  Previous structure:
+
+  ```
+  /account
+    [tab]
+      page.tsx
+  ```
+
+  New structure:
+
+  ```
+  /account
+    (tabs)
+      addresses
+        page.tsx
+      settings
+        page.tsx
+      ...etc
+  ```
+
+- [#1257](https://github.com/bigcommerce/catalyst/pull/1257) [`d656e79`](https://github.com/bigcommerce/catalyst/commit/d656e7981c7516be560b1944e4351916572b7a05) Thanks [@bc-alexsaiannyi](https://github.com/bc-alexsaiannyi)! - add multipleChoices field(radio-buttons, picklist) for account & address forms
+
+- [#1278](https://github.com/bigcommerce/catalyst/pull/1278) [`f8553c6`](https://github.com/bigcommerce/catalyst/commit/f8553c6c9fb35ab7a143fabd60719c8156269448) Thanks [@jorgemoya](https://github.com/jorgemoya)! - Fix wrapping author text in BlogPostCard.
+
+- [#1317](https://github.com/bigcommerce/catalyst/pull/1317) [`7802361`](https://github.com/bigcommerce/catalyst/commit/780236150bab6e2c43e73a230ed69113e3e1bae3) Thanks [@jorgemoya](https://github.com/jorgemoya)! - Rename NEXT_PUBLIC_DEFAULT_REVALIDATE_TARGET to DEFAULT_REVALIDATE_TARGET since we don't need this exposed to the client.
+
+- [#1296](https://github.com/bigcommerce/catalyst/pull/1296) [`fcd44bb`](https://github.com/bigcommerce/catalyst/commit/fcd44bb90bf2d82b098600f4809ae3f37d5c01dc) Thanks [@bookernath](https://github.com/bookernath)! - Add link header to preconnect to CDN
+
+- [#1257](https://github.com/bigcommerce/catalyst/pull/1257) [`d656e79`](https://github.com/bigcommerce/catalyst/commit/d656e7981c7516be560b1944e4351916572b7a05) Thanks [@bc-alexsaiannyi](https://github.com/bc-alexsaiannyi)! - add multilinetext field for account & address forms
+
+- [#1300](https://github.com/bigcommerce/catalyst/pull/1300) [`b32198b`](https://github.com/bigcommerce/catalyst/commit/b32198b78dcd18b05ba0c0f57269cbd62023a654) Thanks [@jorgemoya](https://github.com/jorgemoya)! - Refactor queries, fragments, and mutations in an effort to set a pattern on where these functions need to be defined.
+
+  Shared queries and mutations will remain in /client for now.
+
+- [#1313](https://github.com/bigcommerce/catalyst/pull/1313) [`6531bb2`](https://github.com/bigcommerce/catalyst/commit/6531bb2ee9b6a6125cd4f9f0e624e023897387be) Thanks [@jorgemoya](https://github.com/jorgemoya)! - Remove "Quick add" button in PLP for products that have options. Will now just show a button that links to the product.
+
 ## 0.14.0
 
 ### Minor Changes
