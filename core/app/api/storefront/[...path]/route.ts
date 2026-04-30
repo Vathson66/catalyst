@@ -34,7 +34,7 @@ async function proxy(
   const targetUrl = `${STOREFRONT_URL}/api/storefront/${pathSegments.join('/')}${search}`;
 
   const proxyHeaders = new Headers();
-  const token = process.env.BC_STOREFRONT_TOKEN;
+  const token = process.env.BIGCOMMERCE_STOREFRONT_TOKEN;
   if (token) proxyHeaders.set('Authorization', `Bearer ${token}`);
   proxyHeaders.set('Content-Type', 'application/json');
 

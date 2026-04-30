@@ -53,7 +53,7 @@ export async function submitCheckout(
     // For offline methods, update the order to set payment method + status
     const offlineConfig = OFFLINE_METHODS[methodId.toLowerCase()];
     if (offlineConfig) {
-      const v2Base = `https://api.bigcommerce.com/stores/${process.env.BC_STORE_HASH}/v2`;
+      const v2Base = `https://api.bigcommerce.com/stores/${process.env.BIGCOMMERCE_STORE_HASH}/v2`;
       await fetch(`${v2Base}/orders/${orderId}`, {
         method: 'PUT',
         headers,

@@ -7,8 +7,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 function bcBase(): string {
-  const hash = process.env.BC_STORE_HASH;
-  if (!hash) throw new Error('Missing BC_STORE_HASH');
+  const hash = process.env.BIGCOMMERCE_STORE_HASH;
+  if (!hash) throw new Error('Missing BIGCOMMERCE_STORE_HASH');
   return `https://api.bigcommerce.com/stores/${hash}`;
 }
 

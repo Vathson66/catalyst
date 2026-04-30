@@ -13,7 +13,8 @@ function requireEnv(name: string): string {
 }
 
 export function bcManagementBase(): string {
-  return `https://api.bigcommerce.com/stores/${requireEnv('BC_STORE_HASH')}/v3`;
+  // Reuse the same store hash var that Catalyst's GraphQL client uses.
+  return `https://api.bigcommerce.com/stores/${requireEnv('BIGCOMMERCE_STORE_HASH')}/v3`;
 }
 
 export function bcManagementHeaders(): Record<string, string> {
