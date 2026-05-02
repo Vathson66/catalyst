@@ -1,5 +1,6 @@
 'use client';
 
+import { useLocale } from 'next-intl';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -8,7 +9,7 @@ import type { SdkPaymentMethod, SdkShippingOption } from '~/lib/checkout/sdk-ada
 import type { CheckoutSession } from '~/lib/checkout/types';
 
 type Step = 'guest' | 'shipping' | 'payment';
-type PaymentMethod = 'card' | 'paypal' | 'google-pay' | 'apple-pay' | 'amazon-pay' | 'bank-deposit' | 'cash-on-delivery' | 'check';
+type PaymentKey = string;
 
 interface SavedAddress {
   id: number;
@@ -45,8 +46,11 @@ interface Props {
 export function CheckoutClient({ session, initialLoan }: Props) {
   const router = useRouter();
   const pathname = usePathname();
-  // Extract locale prefix for router.push (e.g. '/en' from '/en/checkout')
-  const localePrefix = `/${pathname.split('/')[1]}`;
+  const locale = useLocale();
+  // next-intl uses 'as-needed' — default locale has no prefix in the URL.
+  // Detect by checking if the first path segment matches the locale code.
+  const firstSegment = pathname.split('/')[1];
+  const localePrefix = firstSegment === locale ? `/${locale}` : '';
 
   // Multi-step flow
   const [step, setStep] = useState<Step>('guest');
@@ -86,29 +90,13 @@ export function CheckoutClient({ session, initialLoan }: Props) {
   const [sameAsShipping, setSameAsShipping] = useState(true);
   const [billingAddr, setBillingAddr] = useState({ ...shippingAddr });
 
-  // Payment & Loan
-  const [useLoan, setUseLoan] = useState(false);
-  const [loan, setLoan] = useState<LoanState>(initialLoan);
-  const [loanAmount, setLoanAmount] = useState(Math.min(session.loan.approvedAmount, session.grandTotal));
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('card');
-
-  // Inline card form state
-  const [cardName, setCardName] = useState('');
-  const [cardNumber, setCardNumber] = useState('');
-  const [cardExpiry, setCardExpiry] = useState('');
-  const [cardCvv, setCardCvv] = useState('');
-
   // Shipping options
   const [shippingConfirmed, setShippingConfirmed] = useState(false);
   const [shippingOptions, setShippingOptions] = useState<SdkShippingOption[]>([]);
   const [selectedShipping, setSelectedShipping] = useState('');
   const [loadingShippingOpts, setLoadingShippingOpts] = useState(false);
 
-  // Payment methods
-  const [availableMethods, setAvailableMethods] = useState<SdkPaymentMethod[]>([]);
-
   // UI state
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // SDK adapter
@@ -343,96 +331,24 @@ export function CheckoutClient({ session, initialLoan }: Props) {
 
   // ── Loan toggle ────────────────────────────────────────────────────────
 
-  const handleLoanToggle = useCallback(
-    (checked: boolean) => {
-      setError(null);
-      setUseLoan(checked);
-      if (!checked) {
-        setLoan({ appliedLoan: 0, residual: session.grandTotal });
-      }
-    },
-    [session.grandTotal],
-  );
-
-  // ── Submit ─────────────────────────────────────────────────────────────
-
-  const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-      setError(null);
-      setSubmitting(true);
-
-      try {
-        if (session.loanEnabled && session.loan.eligible && useLoan) {
-          const res = await fetch('/api/checkout/apply-loan', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              checkoutId: session.checkoutId,
-              useLoan: true,
-              customAmount: loanAmount,
-            }),
-          });
-          if (!res.ok) throw new Error('Could not apply financing. Please try again.');
-          const data = (await res.json()) as { appliedLoan: number; residual: number };
-          setLoan({ appliedLoan: data.appliedLoan, residual: data.residual });
-        }
-
-        if (paymentMethod === 'card') {
-          if (!cardNumber.replace(/\s/g, '')) throw new Error('Please enter your card number.');
-          if (!cardExpiry) throw new Error('Please enter the card expiry date.');
-          if (!cardCvv) throw new Error('Please enter the security code.');
-        }
-
-        const sdkMethod = availableMethods.find((m) => mapMethodId(m) === paymentMethod);
-        const methodId = sdkMethod?.id ?? paymentMethod;
-        const gatewayId = sdkMethod?.gateway;
-
-        const submitRes = await fetch('/api/checkout/submit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            checkoutId: session.checkoutId,
-            methodId,
-            gatewayId,
-            ...(paymentMethod === 'card' && {
-              card: { name: cardName, number: cardNumber, expiry: cardExpiry, cvv: cardCvv },
-            }),
-          }),
-        });
-        const submitData = (await submitRes.json()) as { orderId?: number; error?: string };
-        if (!submitRes.ok || !submitData.orderId) {
-          throw new Error(submitData.error ?? 'Order submission failed. Please try again.');
-        }
-        const orderId = submitData.orderId;
-
-        const finalLoan = useLoan && session.loanEnabled && session.loan.eligible ? loanAmount : 0;
-        const confirmationEmail = shippingAddr.email || signedInCustomer?.email || guestEmail;
-        const params = new URLSearchParams({
-          orderId: String(orderId),
-          total: String(session.grandTotal),
-          paid: String(session.grandTotal - finalLoan),
-          loanApplied: String(finalLoan),
-          email: confirmationEmail,
-          currency: session.currencyCode,
-        });
-
-        router.push(`${localePrefix}/checkout/order-confirmation?${params.toString()}`);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Something went wrong placing your order. Please try again.');
-      } finally {
-        setSubmitting(false);
-      }
-    },
-    [paymentMethod, loan, session, useLoan, loanAmount, shippingAddr.email, router, localePrefix, availableMethods, cardName, cardNumber, cardExpiry, cardCvv, signedInCustomer, guestEmail],
-  );
-
-  const maxLoan = Math.min(session.loan.approvedAmount, session.grandTotal);
-  const loanPct = maxLoan > 0 ? (loanAmount / maxLoan) * 100 : 0;
-  const previewDue = Math.max(session.grandTotal - loanAmount, 0);
-  // These are used inside deeply-nested JSX conditionals; void suppresses noUnusedLocals.
-  void loanPct;
-  void previewDue;
+  // Auto-fetch shipping options when entering the shipping step with a pre-filled address
+  // (e.g. continuing as a signed-in customer who has a saved address).
+  useEffect(() => {
+    if (
+      step === 'shipping' &&
+      !shippingConfirmed &&
+      !loadingShippingOpts &&
+      shippingAddr.firstName &&
+      shippingAddr.address1 &&
+      shippingAddr.city &&
+      shippingAddr.state &&
+      shippingAddr.postalCode
+    ) {
+      void fetchShippingOptions(shippingAddr);
+    }
+    // Only re-run when we enter the shipping step
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   // ── STEP: Guest ──────────────────────────────────────────────────
 
@@ -752,7 +668,7 @@ export function CheckoutClient({ session, initialLoan }: Props) {
           </section>
 
           <aside className="order-summary-rail">
-            <OrderSummaryCard session={session} loan={loan} fmt={fmt} />
+            <OrderSummaryCard session={session} loan={initialLoan} fmt={fmt} />
           </aside>
         </div>
       </main>
@@ -833,9 +749,7 @@ export function CheckoutClient({ session, initialLoan }: Props) {
                   email: shippingAddr.email || guestEmail,
                 });
 
-                const methods = await sdk.loadPaymentMethods();
-                setAvailableMethods(methods);
-
+                // All context is already in component state — just advance the step.
                 setStep('payment');
               } catch (err) {
                 setError(err instanceof Error ? err.message : 'Could not process shipping details. Please try again.');
@@ -1059,7 +973,9 @@ export function CheckoutClient({ session, initialLoan }: Props) {
             {error && <div className="error-banner">{error}</div>}
 
             {loadingShippingOpts && (
-              <p className="lookup-checking"><Spinner /> Fetching shipping options…</p>
+              <p className="lookup-checking">
+                <Spinner /> {shippingConfirmed ? 'Confirming your order details…' : 'Fetching shipping options…'}
+              </p>
             )}
 
             {!loadingShippingOpts && shippingConfirmed && (shippingOptions.length === 0 || selectedShipping) && (
@@ -1070,391 +986,29 @@ export function CheckoutClient({ session, initialLoan }: Props) {
           </section>
 
           <aside className="order-summary-rail">
-            <OrderSummaryCard session={session} loan={loan} fmt={fmt} />
+            <OrderSummaryCard session={session} loan={initialLoan} fmt={fmt} />
           </aside>
         </form>
       </main>
     );
   }
 
-  // ── STEP: Payment ──────────────────────────────────────────────────────
+  // ── STEP: Payment ────────────────────────────────────────────────────────
 
   if (step === 'payment') {
-    const showLoan = session.loanEnabled && session.loan.eligible;
-    const dueTodayWithLoan = Math.max(session.grandTotal - loanAmount, 0);
-    const loanPct2 = maxLoan > 0 ? (loanAmount / maxLoan) * 100 : 0;
-
     return (
-      <main className="page">
-        <div className="page-header">
-          <h1 className="page-title">Payment</h1>
-          <p className="page-subtitle">
-            <button type="button" className="link-button" onClick={() => setStep('shipping')}>
-              ← {shippingAddr.firstName} {shippingAddr.lastName}, {shippingAddr.city}
-            </button>
-          </p>
-        </div>
-
-        <form className="checkout-grid" onSubmit={handleSubmit}>
-          <section className="checkout-main">
-
-            {showLoan && (
-              <div className="financing-card">
-                <div className="financing-header">
-                  <div className="financing-badge">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                      <circle cx="7" cy="7" r="7" fill="#197a47" />
-                      <path d="M4 7.5l2 2 4-4" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                    Pre-Approved
-                  </div>
-                  <h2 className="financing-title">Merchant Financing Available</h2>
-                  <p className="financing-subtitle">
-                    You&apos;re approved for up to{' '}
-                    <strong>{fmt(session.loan.approvedAmount)}</strong>{' '}
-                    — apply it to reduce what you pay by card today.
-                  </p>
-                </div>
-
-                <div className="financing-toggle-row">
-                  <div className="financing-toggle-text">
-                    <div className="financing-toggle-main">Apply financing to this order</div>
-                    <div className="financing-toggle-sub">Reduces the amount charged to your card today</div>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={useLoan}
-                    className={`toggle-switch${useLoan ? ' toggle-switch-on' : ''}`}
-                    onClick={() => handleLoanToggle(!useLoan)}
-                    aria-label="Toggle financing"
-                  >
-                    <span className="toggle-thumb" />
-                  </button>
-                </div>
-
-                {useLoan && (
-                  <div className="financing-expanded">
-                    <div className="financing-amount-header">
-                      <span className="financing-amount-label">Financing amount</span>
-                      <span className="financing-amount-value">{fmt(loanAmount)}</span>
-                    </div>
-                    <input
-                      type="range"
-                      className="financing-slider"
-                      min={0}
-                      max={maxLoan}
-                      step={10}
-                      value={loanAmount}
-                      onChange={(e) => setLoanAmount(parseFloat(e.target.value))}
-                      style={{ '--loan-pct': `${loanPct2}%` } as React.CSSProperties}
-                      aria-label="Financing amount"
-                    />
-                    <div className="financing-slider-bounds">
-                      <span>{fmt(0)}</span>
-                      <span>{fmt(maxLoan)}</span>
-                    </div>
-                    <div className="financing-split-preview">
-                      <div className="financing-split-bar-wrap">
-                        <div
-                          className="financing-split-bar-loan"
-                          style={{ width: `${(loanAmount / session.grandTotal) * 100}%` }}
-                        />
-                      </div>
-                      <div className="financing-split-amounts">
-                        <div className="financing-split-item financing-split-left">
-                          <span className="financing-split-dot financing-split-dot-green" />
-                          <div>
-                            <div className="financing-split-label">Loan covers</div>
-                            <div className="financing-split-value financing-split-value-green">{fmt(loanAmount)}</div>
-                          </div>
-                        </div>
-                        <div className="financing-split-item financing-split-right">
-                          <span className="financing-split-dot financing-split-dot-ink" />
-                          <div>
-                            <div className="financing-split-label">You pay today</div>
-                            <div className="financing-split-value">{fmt(dueTodayWithLoan)}</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="card section-gap">
-              <p className="section-label">
-                {showLoan && useLoan
-                  ? `Pay remaining ${fmt(dueTodayWithLoan)} by`
-                  : `Pay ${fmt(session.grandTotal)} by`}
-              </p>
-              <div className="method-grid">
-                {resolvePaymentMethods(availableMethods, showLoan && useLoan).map(({ key, label, icon }) => (
-                  <MethodRadio
-                    key={key}
-                    checked={paymentMethod === key}
-                    onChange={() => setPaymentMethod(key)}
-                    label={label}
-                  >
-                    {icon}
-                  </MethodRadio>
-                ))}
-              </div>
-            </div>
-
-            {(paymentMethod === 'bank-deposit' || paymentMethod === 'cash-on-delivery' || paymentMethod === 'check') && (
-              <div className="card section-gap">
-                <p className="section-label">Payment instructions</p>
-                <p style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.6 }}>
-                  {paymentMethod === 'bank-deposit' && 'Our bank details will be emailed to you after placing your order. Your order will be processed once payment is received.'}
-                  {paymentMethod === 'cash-on-delivery' && 'Pay in cash when your order is delivered. Please have the exact amount ready.'}
-                  {paymentMethod === 'check' && 'Please make your check payable to the store. Mail it to the address in your confirmation email.'}
-                </p>
-              </div>
-            )}
-
-            {paymentMethod === 'card' && (
-              <div className="card section-gap">
-                <p className="section-label">Secure card entry</p>
-
-                <div className="form-row">
-                  <label className="form-field form-field-full">
-                    <span className="field-label">Name on card</span>
-                    <input
-                      className="field-input"
-                      type="text"
-                      autoComplete="cc-name"
-                      placeholder="Jane Smith"
-                      value={cardName}
-                      onChange={(e) => setCardName(e.target.value)}
-                    />
-                  </label>
-                </div>
-
-                <div className="form-row">
-                  <label className="form-field form-field-full">
-                    <span className="field-label">Card number</span>
-                    <input
-                      className="field-input"
-                      type="text"
-                      autoComplete="cc-number"
-                      inputMode="numeric"
-                      placeholder="1234 5678 9012 3456"
-                      maxLength={19}
-                      value={cardNumber}
-                      onChange={(e) => {
-                        const raw = e.target.value.replace(/\D/g, '').slice(0, 16);
-                        setCardNumber(raw.replace(/(\d{4})(?=\d)/g, '$1 '));
-                      }}
-                    />
-                  </label>
-                </div>
-
-                <div className="form-row form-row-cols">
-                  <label className="form-field">
-                    <span className="field-label">Expiry (MM / YY)</span>
-                    <input
-                      className="field-input"
-                      type="text"
-                      autoComplete="cc-exp"
-                      inputMode="numeric"
-                      placeholder="MM / YY"
-                      maxLength={7}
-                      value={cardExpiry}
-                      onChange={(e) => {
-                        const raw = e.target.value.replace(/\D/g, '').slice(0, 4);
-                        setCardExpiry(raw.length > 2 ? raw.slice(0, 2) + ' / ' + raw.slice(2) : raw);
-                      }}
-                    />
-                  </label>
-                  <label className="form-field">
-                    <span className="field-label">Security code</span>
-                    <input
-                      className="field-input"
-                      type="text"
-                      autoComplete="cc-csc"
-                      inputMode="numeric"
-                      placeholder="CVV"
-                      maxLength={4}
-                      value={cardCvv}
-                      onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                    />
-                  </label>
-                </div>
-              </div>
-            )}
-
-            <div className="card section-gap">
-              <p className="section-label">Billing address</p>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={sameAsShipping}
-                className="billing-same-toggle"
-                onClick={() => {
-                  const next = !sameAsShipping;
-                  setSameAsShipping(next);
-                  if (next) setBillingAddr({ ...shippingAddr });
-                }}
-              >
-                <span className={`toggle-switch${sameAsShipping ? ' toggle-switch-on' : ''}`}>
-                  <span className="toggle-thumb" />
-                </span>
-                <span className="billing-same-label">Same as shipping address</span>
-              </button>
-
-              {!sameAsShipping && (
-                <>
-                  <div className="form-row form-row-cols">
-                    <label className="form-field">
-                      <span className="field-label">First name *</span>
-                      <input className="field-input" type="text" value={billingAddr.firstName}
-                        onChange={(e) => setBillingAddr((p) => ({ ...p, firstName: e.target.value }))} required />
-                    </label>
-                    <label className="form-field">
-                      <span className="field-label">Last name *</span>
-                      <input className="field-input" type="text" value={billingAddr.lastName}
-                        onChange={(e) => setBillingAddr((p) => ({ ...p, lastName: e.target.value }))} required />
-                    </label>
-                  </div>
-                  <div className="form-row">
-                    <label className="form-field form-field-full">
-                      <span className="field-label">Street address *</span>
-                      <input className="field-input" type="text" placeholder="123 Main St"
-                        value={billingAddr.address1}
-                        onChange={(e) => setBillingAddr((p) => ({ ...p, address1: e.target.value }))} required />
-                    </label>
-                  </div>
-                  <div className="form-row form-row-cols">
-                    <label className="form-field">
-                      <span className="field-label">City *</span>
-                      <input className="field-input" type="text" value={billingAddr.city}
-                        onChange={(e) => setBillingAddr((p) => ({ ...p, city: e.target.value }))} required />
-                    </label>
-                    <label className="form-field">
-                      <span className="field-label">State *</span>
-                      <input className="field-input" type="text" placeholder="CA" maxLength={2}
-                        value={billingAddr.state}
-                        onChange={(e) => setBillingAddr((p) => ({ ...p, state: e.target.value }))} required />
-                    </label>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {error && <div className="error-banner">{error}</div>}
-
-            <button
-              type="submit"
-              className={`cta-btn${submitting ? ' cta-btn-loading' : ''}`}
-              disabled={submitting}
-            >
-              {submitting ? (
-                <><Spinner /> Processing…</>
-              ) : paymentMethod === 'paypal' ? (
-                'Pay with PayPal →'
-              ) : paymentMethod === 'apple-pay' ? (
-                'Pay with Apple Pay →'
-              ) : paymentMethod === 'google-pay' ? (
-                'Pay with Google Pay →'
-              ) : paymentMethod === 'amazon-pay' ? (
-                'Pay with Amazon Pay →'
-              ) : paymentMethod === 'bank-deposit' ? (
-                'Place order — pay by bank transfer'
-              ) : paymentMethod === 'cash-on-delivery' ? (
-                'Place order — pay on delivery'
-              ) : paymentMethod === 'check' ? (
-                'Place order — pay by check'
-              ) : (
-                `Place order — ${fmt(useLoan && showLoan ? dueTodayWithLoan : session.grandTotal)}`
-              )}
-            </button>
-          </section>
-
-          <aside className="order-summary-rail">
-            <OrderSummaryCard session={session} loan={loan} fmt={fmt} />
-          </aside>
-        </form>
-      </main>
+      <PaymentStep
+        session={session}
+        email={shippingAddr.email || guestEmail}
+        name={`${shippingAddr.firstName} ${shippingAddr.lastName}`.trim()}
+        city={shippingAddr.city}
+        onBack={() => setStep('shipping')}
+        localePrefix={localePrefix}
+      />
     );
   }
 
   return null;
-}
-
-// ── Payment method helpers ───────────────────────────────────────────────────
-
-type PaymentKey = 'card' | 'paypal' | 'google-pay' | 'apple-pay' | 'amazon-pay' | 'bank-deposit' | 'cash-on-delivery' | 'check';
-
-interface PaymentMethodDisplay {
-  key: PaymentKey;
-  label: string;
-  icon: React.ReactElement;
-}
-
-function mapMethodId(m: SdkPaymentMethod): PaymentKey | null {
-  const id = m.id.toLowerCase();
-  const method = m.method.toLowerCase();
-  if (method === 'bank-deposit' || id === 'bank_deposit') return 'bank-deposit';
-  if (method === 'cash-on-delivery' || id === 'cash_on_delivery') return 'cash-on-delivery';
-  if (method === 'check' || id === 'check_money_order') return 'check';
-  if (method === 'credit-card' || method === 'card' || id === 'card' || id === 'bigpaypay') return 'card';
-  if (id === 'paypalcommerce' || id === 'paypalcommercecredit') return 'paypal';
-  if (id.includes('paypal')) return 'paypal';
-  if (id.includes('google') || id.includes('googlepay')) return 'google-pay';
-  if (id.includes('apple') || id.includes('applepay')) return 'apple-pay';
-  if (id.includes('amazon') || id.includes('amazonpay')) return 'amazon-pay';
-  return null;
-}
-
-const FALLBACK_METHODS: PaymentMethodDisplay[] = [
-  { key: 'card', label: 'Credit / Debit Card', icon: <CardIcon /> },
-  { key: 'paypal', label: 'PayPal', icon: <PayPalIcon /> },
-  { key: 'google-pay', label: 'Google Pay', icon: <GooglePayIcon /> },
-  { key: 'apple-pay', label: 'Apple Pay', icon: <ApplePayIcon /> },
-  { key: 'amazon-pay', label: 'Amazon Pay', icon: <AmazonPayIcon /> },
-];
-
-const OFFLINE_ICONS: Record<string, React.ReactElement> = {
-  'bank-deposit': <span style={{ fontSize: 18 }}>🏦</span>,
-  'cash-on-delivery': <span style={{ fontSize: 18 }}>💵</span>,
-  'check': <span style={{ fontSize: 18 }}>📋</span>,
-};
-
-function resolvePaymentMethods(
-  sdkMethods: SdkPaymentMethod[],
-  hasLoan: boolean,
-): PaymentMethodDisplay[] {
-  const mapped: PaymentMethodDisplay[] =
-    sdkMethods.length === 0
-      ? FALLBACK_METHODS
-      : (sdkMethods
-          .map((m) => {
-            const key = mapMethodId(m);
-            if (!key) return null;
-            const label =
-              key === 'card'
-                ? hasLoan ? 'Credit / Debit Card (remaining balance)' : 'Credit / Debit Card'
-                : m.name;
-            const icon =
-              key === 'card' ? <CardIcon /> :
-              key === 'paypal' ? <PayPalIcon /> :
-              key === 'google-pay' ? <GooglePayIcon /> :
-              key === 'apple-pay' ? <ApplePayIcon /> :
-              key in OFFLINE_ICONS ? OFFLINE_ICONS[key]! :
-              <AmazonPayIcon />;
-            return { key, label, icon } satisfies PaymentMethodDisplay;
-          })
-          .filter((x): x is NonNullable<typeof x> => x !== null)
-          .filter((m, i, arr) => arr.findIndex((n) => n.key === m.key) === i) as PaymentMethodDisplay[]);
-
-  if (hasLoan) {
-    return mapped.map((m) =>
-      m.key === 'card' ? { ...m, label: 'Credit / Debit Card (remaining balance)' } : m,
-    );
-  }
-  return mapped;
 }
 
 function OrderSummaryCard({
@@ -1576,31 +1130,6 @@ function OrderSummaryCard({
   );
 }
 
-// ── MethodRadio ──────────────────────────────────────────────────────────────
-
-interface MethodRadioProps {
-  checked: boolean;
-  onChange: () => void;
-  label: string;
-  children: React.ReactNode;
-}
-
-function MethodRadio({ checked, onChange, label, children }: MethodRadioProps) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={checked}
-      className={`method-radio${checked ? ' method-radio-selected' : ''}`}
-      onClick={onChange}
-    >
-      <span className="method-radio-icon">{children}</span>
-      <span className="method-radio-label">{label}</span>
-      <span className={`method-radio-circle${checked ? ' method-radio-circle-selected' : ''}`} />
-    </button>
-  );
-}
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function Spinner() {
@@ -1654,39 +1183,472 @@ function AmazonPayLogo() {
   );
 }
 
-function PayPalIcon() {
+// ── Payment Step ─────────────────────────────────────────────────────────────
+
+interface PaymentStepProps {
+  session: CheckoutSession;
+  email: string;
+  name: string;
+  city: string;
+  onBack: () => void;
+  localePrefix: string;
+}
+
+function PaymentStep({ session, email, name, city, onBack, localePrefix }: PaymentStepProps) {
+  const router = useRouter();
+
+  const fmt = (n: number) =>
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: session.currencyCode }).format(n);
+
+  // ── State ────────────────────────────────────────────────────────────────
+
+  const [availableMethods, setAvailableMethods] = useState<SdkPaymentMethod[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentKey>('');
+  const [loadingMethods, setLoadingMethods] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [useLoan, setUseLoan] = useState(false);
+  const [loanAmount, setLoanAmount] = useState(
+    Math.min(session.loan.approvedAmount, session.grandTotal),
+  );
+
+  const maxLoan = Math.min(session.loan.approvedAmount, session.grandTotal);
+  const showLoan = session.loanEnabled && session.loan.eligible;
+  const dueTodayWithLoan = Math.max(session.grandTotal - loanAmount, 0);
+
+  // ── Load payment methods from BigCommerce payment settings ────────────────
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/checkout/payment-methods?checkoutId=${encodeURIComponent(session.checkoutId)}`,
+        );
+        const data = (await res.json()) as { methods?: SdkPaymentMethod[]; error?: string };
+        if (!res.ok) {
+          throw new Error(data.error ?? 'Could not load payment options.');
+        }
+
+        const methods = data.methods ?? [];
+        setAvailableMethods(methods);
+        if (methods.length > 0 && methods[0]) {
+          setPaymentMethod(methods[0].id);
+        } else {
+          setError('No payment methods are configured in BigCommerce for this checkout.');
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not load payment options.');
+      } finally {
+        setLoadingMethods(false);
+      }
+    })();
+  }, [session.checkoutId]);
+
+  // ── Submit ────────────────────────────────────────────────────────────────
+
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      setError(null);
+      setSubmitting(true);
+
+      try {
+        const selectedMethod = availableMethods.find((m) => m.id === paymentMethod);
+        if (!selectedMethod) {
+          throw new Error('Please select a payment method.');
+        }
+
+        if (isManualMethod(selectedMethod)) {
+          let appliedLoan = 0;
+          if (session.loanEnabled && session.loan.eligible && useLoan) {
+            const res = await fetch('/api/checkout/apply-loan', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                checkoutId: session.checkoutId,
+                useLoan: true,
+                customAmount: loanAmount,
+              }),
+            });
+            if (!res.ok) throw new Error('Could not apply financing. Please try again.');
+            appliedLoan = loanAmount;
+          }
+
+          const submitRes = await fetch('/api/checkout/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              checkoutId: session.checkoutId,
+              methodId: selectedMethod.id,
+              gatewayId: selectedMethod.gateway,
+            }),
+          });
+
+          const submitData = (await submitRes.json()) as { orderId?: number; error?: string };
+          if (!submitRes.ok || !submitData.orderId) {
+            throw new Error(submitData.error ?? 'Order submission failed.');
+          }
+
+          const params = new URLSearchParams({
+            orderId: String(submitData.orderId),
+            total: String(session.grandTotal),
+            paid: String(session.grandTotal - appliedLoan),
+            loanApplied: String(appliedLoan),
+            email,
+            currency: session.currencyCode,
+          });
+          router.push(`${localePrefix}/checkout/order-confirmation?${params.toString()}`);
+          return;
+        }
+
+        // Online and wallet methods continue on BC-hosted secure checkout,
+        // still driven by merchant-level payment settings for this channel.
+        const redirectRes = await fetch(
+          `/api/checkout/checkout-url?checkoutId=${encodeURIComponent(session.checkoutId)}`,
+        );
+        const redirectData = (await redirectRes.json()) as {
+          checkoutUrl?: string;
+          error?: string;
+        };
+
+        if (!redirectRes.ok || !redirectData.checkoutUrl) {
+          throw new Error(
+            redirectData.error ?? 'Unable to continue to BigCommerce secure checkout.',
+          );
+        }
+
+        window.location.assign(redirectData.checkoutUrl);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : 'Something went wrong. Please try again.',
+        );
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [
+      paymentMethod,
+      session,
+      useLoan,
+      loanAmount,
+      availableMethods,
+      router,
+      localePrefix,
+      email,
+    ],
+  );
+
+  const selectedMethod = availableMethods.find((m) => m.id === paymentMethod);
+  const manualSelected = selectedMethod ? isManualMethod(selectedMethod) : false;
+  const showLoanForSelection = showLoan && manualSelected;
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
   return (
-    <span aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'baseline', gap: 0, lineHeight: 1 }}>
-      <span style={{ fontFamily: 'Arial Black, Arial, sans-serif', fontWeight: 900, fontSize: 11, color: '#003087' }}>Pay</span>
-      <span style={{ fontFamily: 'Arial Black, Arial, sans-serif', fontWeight: 900, fontSize: 11, color: '#009cde' }}>Pal</span>
-    </span>
+    <main className="page">
+      <div className="page-header">
+        <h1 className="page-title">Payment</h1>
+        <p className="page-subtitle">
+          <button type="button" className="link-button" onClick={onBack}>
+            ← {name}, {city}
+          </button>
+        </p>
+      </div>
+
+      <form className="checkout-grid" onSubmit={(e) => { void handleSubmit(e); }}>
+        <section className="checkout-main">
+
+          {/* ── Financing card ──────────────────────────────────────── */}
+          {showLoanForSelection && (
+            <div className="financing-card">
+              <div className="financing-header">
+                <div className="financing-badge">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <circle cx="7" cy="7" r="7" fill="#197a47" />
+                    <path d="M4 7.5l2 2 4-4" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Pre-Approved
+                </div>
+                <h2 className="financing-title">Merchant Financing Available</h2>
+                <p className="financing-subtitle">
+                  You&apos;re approved for up to{' '}
+                  <strong>{fmt(session.loan.approvedAmount)}</strong> — apply it to reduce what
+                  you pay by card today.
+                </p>
+              </div>
+              <div className="financing-toggle-row">
+                <div className="financing-toggle-text">
+                  <div className="financing-toggle-main">Apply financing to this order</div>
+                  <div className="financing-toggle-sub">Reduces the amount charged to your card today</div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={useLoan}
+                  className={`toggle-switch${useLoan ? ' toggle-switch-on' : ''}`}
+                  onClick={() => setUseLoan(!useLoan)}
+                  aria-label="Toggle financing"
+                >
+                  <span className="toggle-thumb" />
+                </button>
+              </div>
+              {useLoan && (
+                <div className="financing-expanded">
+                  <div className="financing-amount-header">
+                    <span className="financing-amount-label">Financing amount</span>
+                    <span className="financing-amount-value">{fmt(loanAmount)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    className="financing-slider"
+                    min={0}
+                    max={maxLoan}
+                    step={10}
+                    value={loanAmount}
+                    onChange={(e) => setLoanAmount(parseFloat(e.target.value))}
+                    style={{ '--loan-pct': `${(loanAmount / maxLoan) * 100}%` } as React.CSSProperties}
+                    aria-label="Financing amount"
+                  />
+                  <div className="financing-slider-bounds">
+                    <span>{fmt(0)}</span>
+                    <span>{fmt(maxLoan)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Payment method selection ───────────────────────────── */}
+          <div className="card section-gap">
+            <p className="section-label">
+              {showLoanForSelection && useLoan
+                ? `Pay remaining ${fmt(dueTodayWithLoan)} by`
+                : `Pay ${fmt(session.grandTotal)} by`}
+            </p>
+            {loadingMethods ? (
+              <p className="lookup-checking"><Spinner /> Loading payment options…</p>
+            ) : (
+              <div className="method-grid">
+                {resolvePaymentMethods(availableMethods, showLoanForSelection && useLoan).map((methodOption) => (
+                  <MethodRadio
+                    key={methodOption.id}
+                    checked={paymentMethod === methodOption.id}
+                    onChange={() => setPaymentMethod(methodOption.id)}
+                    label={methodOption.label}
+                  >
+                    {methodOption.icon}
+                  </MethodRadio>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Offline instructions ────────────────────────────────── */}
+          {manualSelected && selectedMethod && (
+            <div className="card section-gap">
+              <p className="section-label">Payment instructions</p>
+              <p style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.6 }}>
+                {manualInstruction(selectedMethod.method)}
+              </p>
+            </div>
+          )}
+
+          {!manualSelected && selectedMethod && (
+            <div className="card section-gap">
+              <p className="section-label">Secure payment handoff</p>
+              <p style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.6 }}>
+                You selected <strong>{selectedMethod.name}</strong>. After you continue, BigCommerce
+                secure checkout will complete payment using your merchant-configured payment settings.
+              </p>
+            </div>
+          )}
+
+          {error && <div className="error-banner">{error}</div>}
+
+          <button
+            type="submit"
+            className={`cta-btn${submitting ? ' cta-btn-loading' : ''}`}
+            disabled={submitting || !paymentMethod}
+          >
+            {submitting ? (
+              <><Spinner /> Processing…</>
+            ) : manualSelected && selectedMethod?.method === 'bank-deposit' ? (
+              'Place order — pay by bank transfer'
+            ) : manualSelected && selectedMethod?.method === 'cash-on-delivery' ? (
+              'Place order — pay on delivery'
+            ) : manualSelected && selectedMethod?.method === 'check' ? (
+              'Place order — pay by check'
+            ) : manualSelected ? (
+              `Place order — ${fmt(showLoanForSelection && useLoan ? dueTodayWithLoan : session.grandTotal)}`
+            ) : (
+              'Continue to BigCommerce secure payment'
+            )}
+          </button>
+        </section>
+
+        <aside className="order-summary-rail">
+          <OrderSummaryCard
+            session={session}
+            loan={{
+              appliedLoan: showLoanForSelection && useLoan ? loanAmount : 0,
+              residual: showLoanForSelection && useLoan ? dueTodayWithLoan : session.grandTotal,
+            }}
+            fmt={fmt}
+          />
+        </aside>
+      </form>
+    </main>
   );
 }
 
-function ApplePayIcon() {
-  return (
-    <svg width="16" height="20" viewBox="0 0 16 20" fill="none" aria-hidden="true">
-      <path d="M13.2 10.7c0-1.67 1.13-2.5 1.2-2.55-.66-.96-1.69-1.09-2.06-1.1-.88-.09-1.73.52-2.18.52-.45 0-1.15-.5-1.9-.49-.98.01-1.89.57-2.39 1.45-1.03 1.78-.27 4.41.73 5.86.5.71 1.08 1.51 1.85 1.48.74-.03 1.02-.47 1.92-.47.9 0 1.15.47 1.93.46.8-.01 1.3-.72 1.79-1.44.56-1.02.79-2.01.8-2.06-.01-.01-1.49-.56-1.49-1.98l.01-.22-.01.01.01-.06zM11.05 5.15c.41-.5.68-1.19.61-1.89-.59.02-1.31.39-1.73.88-.38.44-.72 1.14-.63 1.81.66.05 1.34-.33 1.75-.8z" fill="currentColor" opacity=".8"/>
-    </svg>
-  );
+// ── Payment method helpers ────────────────────────────────────────────────────
+
+interface PaymentMethodDisplay {
+  id: string;
+  key: PaymentKey;
+  label: string;
+  icon: React.ReactElement;
+  method: string;
+  kind: 'manual' | 'card' | 'wallet' | 'online';
 }
 
-function GooglePayIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <circle cx="10" cy="10" r="9.5" fill="white" stroke="#e0e0e0"/>
-      <text x="6.5" y="14.5" fontFamily="sans-serif" fontSize="10" fontWeight="700" fill="#4285F4">G</text>
-    </svg>
-  );
+const FALLBACK_METHODS: PaymentMethodDisplay[] = [
+  {
+    id: 'fallback.credit-card',
+    key: 'fallback.credit-card',
+    label: 'Credit / Debit Card',
+    icon: <CardIcon />,
+    method: 'credit-card',
+    kind: 'card',
+  },
+];
+
+function resolvePaymentMethods(
+  sdkMethods: SdkPaymentMethod[],
+  hasLoan: boolean,
+): PaymentMethodDisplay[] {
+  const mapped =
+    sdkMethods.length === 0
+      ? FALLBACK_METHODS
+      : (sdkMethods
+          .map((m) => {
+            const kind = inferMethodKind(m);
+            const method = m.method || 'online-payment';
+            const label =
+              kind === 'card'
+                ? hasLoan
+                  ? `${m.name || 'Credit / Debit Card'} (remaining balance)`
+                  : m.name || 'Credit / Debit Card'
+                : m.name || method;
+
+            let icon: React.ReactElement;
+            if (method.includes('paypal')) {
+              icon = <PayPalLogo />;
+            } else if (method.includes('apple')) {
+              icon = <ApplePayLogo />;
+            } else if (method.includes('google')) {
+              icon = <GooglePayLogo />;
+            } else if (method.includes('amazon')) {
+              icon = <AmazonPayLogo />;
+            } else if (kind === 'manual') {
+              if (method === 'bank-deposit') icon = <span style={{ fontSize: 18 }}>🏦</span>;
+              else if (method === 'cash-on-delivery') icon = <span style={{ fontSize: 18 }}>💵</span>;
+              else if (method === 'check') icon = <span style={{ fontSize: 18 }}>📋</span>;
+              else icon = <span style={{ fontSize: 18 }}>🧾</span>;
+            } else if (kind === 'card') {
+              icon = <CardIcon />;
+            } else {
+              icon = <span style={{ fontSize: 18 }}>💳</span>;
+            }
+
+            return {
+              id: m.id,
+              key: m.id,
+              label,
+              icon,
+              method,
+              kind,
+            } satisfies PaymentMethodDisplay;
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null)
+          .filter((m, i, arr) => arr.findIndex((n) => n.id === m.id) === i));
+
+  return mapped;
 }
 
-function AmazonPayIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-      <rect width="22" height="22" rx="4" fill="#FF9900"/>
-      <text x="6" y="15.5" fontFamily="Georgia, serif" fontSize="11" fontWeight="800" fill="#232F3E">a</text>
-    </svg>
-  );
+function inferMethodKind(m: SdkPaymentMethod): 'manual' | 'card' | 'wallet' | 'online' {
+  if (m.kind) return m.kind;
+
+  const method = (m.method || '').toLowerCase();
+  const id = m.id.toLowerCase();
+
+  if (
+    method === 'bank-deposit' ||
+    method === 'cash-on-delivery' ||
+    method === 'check' ||
+    id === 'bank_deposit' ||
+    id === 'cash_on_delivery' ||
+    id === 'check_money_order'
+  ) {
+    return 'manual';
+  }
+
+  if (method.includes('card') || id.includes('.card') || id === 'bigpaypay') {
+    return 'card';
+  }
+
+  if (method.includes('paypal')) {
+    return 'online';
+  }
+
+  if (
+    method.includes('google') ||
+    method.includes('apple') ||
+    method.includes('amazon')
+  ) {
+    return 'wallet';
+  }
+
+  return 'online';
 }
 
+function isManualMethod(m: SdkPaymentMethod): boolean {
+  return inferMethodKind(m) === 'manual';
+}
 
+function manualInstruction(method: string): string {
+  if (method === 'bank-deposit') {
+    return 'Our bank details will be emailed to you after placing your order. Your order is processed once payment is received.';
+  }
+  if (method === 'cash-on-delivery') {
+    return 'Pay in cash when your order is delivered. Please have the exact amount ready.';
+  }
+  if (method === 'check') {
+    return 'Please make your check payable to the store. Mailing instructions are included in your confirmation email.';
+  }
+  return 'Follow the payment instructions shown after placing your order.';
+}
+
+interface MethodRadioProps {
+  checked: boolean;
+  onChange: () => void;
+  label: string;
+  children: React.ReactNode;
+}
+
+function MethodRadio({ checked, onChange, label, children }: MethodRadioProps) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={checked}
+      className={`method-radio${checked ? ' method-radio-selected' : ''}`}
+      onClick={onChange}
+    >
+      <span className="method-radio-icon">{children}</span>
+      <span className="method-radio-label">{label}</span>
+      <span className={`method-radio-circle${checked ? ' method-radio-circle-selected' : ''}`} />
+    </button>
+  );
+}

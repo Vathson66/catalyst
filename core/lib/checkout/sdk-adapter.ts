@@ -22,6 +22,7 @@ export interface SdkPaymentMethod {
   gateway?: string;
   method: string;
   name: string;
+  kind?: 'manual' | 'card' | 'wallet' | 'online';
 }
 
 type AddressInput = {
@@ -60,11 +61,11 @@ const MOCK_SHIPPING_OPTIONS: SdkShippingOption[] = [
 ];
 
 const MOCK_PAYMENT_METHODS: SdkPaymentMethod[] = [
-  { id: 'card', method: 'credit-card', name: 'Credit / Debit Card' },
-  { id: 'paypalcommerce', method: 'paypal', name: 'PayPal', gateway: 'paypalcommerce' },
-  { id: 'googlepay', method: 'googlepay', name: 'Google Pay' },
-  { id: 'applepay', method: 'applepay', name: 'Apple Pay' },
-  { id: 'amazonpay', method: 'amazonpay', name: 'Amazon Pay' },
+  { id: 'card', method: 'credit-card', name: 'Credit / Debit Card', kind: 'online' },
+  { id: 'paypalcommerce', method: 'paypal', name: 'PayPal', gateway: 'paypalcommerce', kind: 'online' },
+  { id: 'googlepay', method: 'googlepay', name: 'Google Pay', kind: 'wallet' },
+  { id: 'applepay', method: 'applepay', name: 'Apple Pay', kind: 'wallet' },
+  { id: 'amazonpay', method: 'amazonpay', name: 'Amazon Pay', kind: 'wallet' },
 ];
 
 export class CheckoutSdkAdapter {

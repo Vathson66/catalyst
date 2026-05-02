@@ -7,29 +7,28 @@ export interface PaymentMethodShape {
   gateway?: string;
   method: string;
   name: string;
-}
-
-function mapMethod(id: string): string {
-  const lower = id.toLowerCase();
-  if (lower === 'bank_deposit') return 'bank-deposit';
-  if (lower === 'cash_on_delivery') return 'cash-on-delivery';
-  if (lower === 'check_money_order') return 'check';
-  if (lower === 'bigpaypay') return 'credit-card';
-  if (lower === 'paypalcommerceacceleratedcheckout') return 'credit-card';
-  if (lower === 'paypalcommerce' || lower === 'paypalcommercecredit') return 'paypal';
-  if (lower.includes('paypal')) return 'paypal';
-  if (lower.includes('google')) return 'googlepay';
-  if (lower.includes('apple')) return 'applepay';
-  if (lower.includes('amazon')) return 'amazonpay';
-  if (lower.includes('klarna')) return 'klarna';
-  if (lower.includes('afterpay') || lower.includes('clearpay')) return 'afterpay';
-  return 'credit-card';
+  kind: 'manual' | 'card' | 'wallet' | 'online';
 }
 
 const OFFLINE_METHOD_DEFINITIONS: Record<string, PaymentMethodShape> = {
-  bank_deposit:     { id: 'bank_deposit',     method: 'bank-deposit',     name: 'Bank Deposit' },
-  cash_on_delivery: { id: 'cash_on_delivery', method: 'cash-on-delivery', name: 'Cash on Delivery' },
-  check_money_order: { id: 'check_money_order', method: 'check',          name: 'Check / Money Order' },
+  bank_deposit: {
+    id: 'bank_deposit',
+    method: 'bank-deposit',
+    name: 'Bank Deposit',
+    kind: 'manual',
+  },
+  cash_on_delivery: {
+    id: 'cash_on_delivery',
+    method: 'cash-on-delivery',
+    name: 'Cash on Delivery',
+    kind: 'manual',
+  },
+  check_money_order: {
+    id: 'check_money_order',
+    method: 'check',
+    name: 'Check / Money Order',
+    kind: 'manual',
+  },
 };
 
 function getConfiguredOfflineMethods(): PaymentMethodShape[] {
@@ -42,11 +41,6 @@ function getConfiguredOfflineMethods(): PaymentMethodShape[] {
     .filter((m): m is PaymentMethodShape => m !== undefined);
 }
 
-const SKIP_METHODS = new Set([
-  'paypalcommerceacceleratedcheckout',
-  'paypalcommercevenmo',
-]);
-
 interface BcMgmtPaymentMethod {
   id: string;
   name: string;
@@ -57,15 +51,73 @@ interface BcMgmtResponse {
   data?: BcMgmtPaymentMethod[];
 }
 
-function normalise(m: BcMgmtPaymentMethod): PaymentMethodShape | null {
+function normalise(m: BcMgmtPaymentMethod): PaymentMethodShape {
   const lower = m.id.toLowerCase();
-  if (SKIP_METHODS.has(lower)) return null;
+
+  if (lower in OFFLINE_METHOD_DEFINITIONS) {
+    const offline = OFFLINE_METHOD_DEFINITIONS[lower]!;
+    return { ...offline, id: m.id, name: m.name || offline.name, gateway: m.gateway };
+  }
+
+  // Wallets should stay as distinct wallet methods.
+  if (lower.includes('google')) {
+    return { id: m.id, gateway: m.gateway, method: 'googlepay', name: m.name, kind: 'wallet' };
+  }
+
+  if (lower.includes('apple')) {
+    return { id: m.id, gateway: m.gateway, method: 'applepay', name: m.name, kind: 'wallet' };
+  }
+
+  if (lower.includes('amazon')) {
+    return { id: m.id, gateway: m.gateway, method: 'amazonpay', name: m.name, kind: 'wallet' };
+  }
+
+  // PayPal is considered an online payment method in BC control panel categories.
+  if (lower.includes('paypal')) {
+    return { id: m.id, gateway: m.gateway, method: 'paypal', name: m.name, kind: 'online' };
+  }
+
+  // Card-like methods are also online methods in BC category terms.
+  if (lower.includes('.card') || lower.includes('card') || lower === 'bigpaypay' || lower === 'stripeocs') {
+    return { id: m.id, gateway: m.gateway, method: 'credit-card', name: m.name, kind: 'online' };
+  }
+
+  if (lower.includes('klarna') || lower.includes('afterpay') || lower.includes('clearpay') || lower.includes('zip') || lower.includes('laybuy') || lower.includes('sezzle')) {
+    return { id: m.id, gateway: m.gateway, method: 'bnpl', name: m.name, kind: 'online' };
+  }
+
+  if (lower.includes('.ach') || lower === 'ach' || lower.includes('bank_transfer')) {
+    return { id: m.id, gateway: m.gateway, method: 'bank-transfer', name: m.name, kind: 'online' };
+  }
+
+  // Fallback: keep method visible to shopper and let BC secure checkout handle it.
   return {
     id: m.id,
     gateway: m.gateway,
-    method: mapMethod(m.id),
+    method: 'online-payment',
     name: m.name,
+    kind: 'online',
   };
+}
+
+function pruneGatewayVariants(methods: PaymentMethodShape[]): PaymentMethodShape[] {
+  const idSet = new Set(methods.map((m) => m.id.toLowerCase()));
+
+  return methods.filter((m) => {
+    const lower = m.id.toLowerCase();
+
+    // Prefer the shopper-facing PayPal flow over PayPal card tokenization variant.
+    if (lower === 'paypalcommerce.card' && idSet.has('paypalcommerce.paypal')) {
+      return false;
+    }
+
+    // Prefer Stripe card flow over ACH variant for method-picker simplicity.
+    if (lower === 'stripeocs.ach' && idSet.has('stripeocs.card')) {
+      return false;
+    }
+
+    return true;
+  });
 }
 
 export async function GET(req: NextRequest) {
@@ -73,7 +125,10 @@ export async function GET(req: NextRequest) {
   const offlineMethods = getConfiguredOfflineMethods();
 
   if (!checkoutId) {
-    return NextResponse.json({ methods: offlineMethods, source: 'fallback' });
+    return NextResponse.json(
+      { error: 'checkoutId is required', methods: offlineMethods, source: 'fallback' },
+      { status: 400 },
+    );
   }
 
   try {
@@ -87,11 +142,9 @@ export async function GET(req: NextRequest) {
 
     if (mgmtRes.ok) {
       const mgmtData = (await mgmtRes.json()) as BcMgmtResponse;
-      const onlineMethods = (mgmtData.data ?? [])
-        .map(normalise)
-        .filter((m): m is PaymentMethodShape => m !== null);
+      const onlineMethods = pruneGatewayVariants((mgmtData.data ?? []).map(normalise));
 
-      // Deduplicate offline methods (don't add if BC already returned them)
+      // Deduplicate on id and append configured offline fallbacks only when BC does not return them.
       const existingIds = new Set(onlineMethods.map((m) => m.id));
       const filteredOffline = offlineMethods.filter((m) => !existingIds.has(m.id));
 
@@ -100,9 +153,25 @@ export async function GET(req: NextRequest) {
         source: 'bc-management',
       });
     }
-  } catch {
-    // fall through to fallback
-  }
 
-  return NextResponse.json({ methods: offlineMethods, source: 'fallback' });
+    const errorBody = await mgmtRes.text();
+    return NextResponse.json(
+      {
+        error: `Unable to load payment methods from BigCommerce [${mgmtRes.status}]`,
+        detail: errorBody,
+        methods: offlineMethods,
+        source: 'fallback',
+      },
+      { status: 502 },
+    );
+  } catch {
+    return NextResponse.json(
+      {
+        error: 'Unable to load payment methods from BigCommerce',
+        methods: offlineMethods,
+        source: 'fallback',
+      },
+      { status: 502 },
+    );
+  }
 }
