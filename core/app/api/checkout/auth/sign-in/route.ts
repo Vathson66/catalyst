@@ -6,6 +6,9 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 
+import { client } from '~/client';
+import { graphql } from '~/client/graphql';
+
 function bcBase(): string {
   const hash = process.env.BIGCOMMERCE_STORE_HASH;
   if (!hash) throw new Error('Missing BIGCOMMERCE_STORE_HASH');
@@ -44,6 +47,46 @@ interface BcCustomerV2 {
 
 interface BcValidateResponse {
   customer_id: number;
+}
+
+const CheckoutLoginValidationMutation = graphql(`
+  mutation CheckoutLoginValidationMutation($email: String!, $password: String!) {
+    login(email: $email, password: $password) {
+      customerAccessToken {
+        value
+      }
+      customer {
+        entityId
+      }
+    }
+  }
+`);
+
+async function validateWithStorefrontLogin(email: string, password: string): Promise<number | null> {
+  try {
+    const response = await client.fetch({
+      document: CheckoutLoginValidationMutation,
+      variables: { email, password },
+      channelId: process.env.BIGCOMMERCE_CHANNEL_ID,
+      fetchOptions: {
+        cache: 'no-store',
+      },
+    });
+
+    if (response.errors && response.errors.length > 0) {
+      return null;
+    }
+
+    const result = response.data.login;
+
+    if (!result.customer?.entityId || !result.customerAccessToken?.value) {
+      return null;
+    }
+
+    return result.customer.entityId;
+  } catch {
+    return null;
+  }
 }
 
 async function buildSuccessResponse(
@@ -116,20 +159,15 @@ export async function POST(req: NextRequest) {
     });
 
     if (validateRes.status === 404) {
-      // validate_credentials needs "Customers Login" scope — fall back to email lookup
-      const fallbackRes = await fetch(
-        `${base}/v2/customers?email=${encodeURIComponent(email)}&limit=1`,
-        { headers },
-      );
-      const fallbackText = await fallbackRes.text();
-      if (!fallbackText || fallbackText.trim() === '') {
-        return NextResponse.json({ success: false, error: 'No account found for that email.' });
+      // Never fall back to email-only lookup. If this endpoint is unavailable,
+      // validate credentials through Storefront GraphQL login instead.
+      const customerId = await validateWithStorefrontLogin(email, password);
+
+      if (!customerId) {
+        return NextResponse.json({ success: false, error: 'Invalid email or password.' });
       }
-      const fallbackData = JSON.parse(fallbackText) as BcCustomerV2[];
-      if (!Array.isArray(fallbackData) || fallbackData.length === 0) {
-        return NextResponse.json({ success: false, error: 'No account found for that email.' });
-      }
-      return await buildSuccessResponse(base, headers, fallbackData[0]!.id, email);
+
+      return await buildSuccessResponse(base, headers, customerId, email);
     }
 
     if (validateRes.status === 204 || !validateRes.ok) {
