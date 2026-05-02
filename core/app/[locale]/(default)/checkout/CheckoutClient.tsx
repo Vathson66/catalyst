@@ -1,8 +1,22 @@
 'use client';
 
+import {
+  createCheckoutService,
+  type CheckoutService,
+  type LegacyHostedFormOptions,
+  type PaymentMethod as CheckoutSdkPaymentMethod,
+} from '@bigcommerce/checkout-sdk';
+import { createCBAMPGSPaymentStrategy } from '@bigcommerce/checkout-sdk/integrations/cba-mpgs';
+import { createCreditCardPaymentStrategy } from '@bigcommerce/checkout-sdk/integrations/credit-card';
+import {
+  createCyberSourcePaymentStrategy,
+  createCyberSourceV2PaymentStrategy,
+} from '@bigcommerce/checkout-sdk/integrations/cybersource';
+import { createNoPaymentStrategy } from '@bigcommerce/checkout-sdk/integrations/no-payment';
+import { createSagePayPaymentStrategy } from '@bigcommerce/checkout-sdk/integrations/sagepay';
 import { useLocale } from 'next-intl';
 import { usePathname, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { CheckoutSdkAdapter } from '~/lib/checkout/sdk-adapter';
 import type { SdkPaymentMethod, SdkShippingOption } from '~/lib/checkout/sdk-adapter';
@@ -1194,6 +1208,32 @@ interface PaymentStepProps {
   localePrefix: string;
 }
 
+interface HostedFieldErrors {
+  cardNumber: string;
+  cardExpiry: string;
+  cardName: string;
+  cardCode: string;
+}
+
+interface HostedFieldIds {
+  cardNumber: string;
+  cardExpiry: string;
+  cardName: string;
+  cardCode: string;
+}
+
+interface ActivePaymentMethodRef {
+  methodId: string;
+  gatewayId?: string;
+}
+
+const EMPTY_HOSTED_FIELD_ERRORS: HostedFieldErrors = {
+  cardNumber: '',
+  cardExpiry: '',
+  cardName: '',
+  cardCode: '',
+};
+
 function PaymentStep({ session, email, name, city, onBack, localePrefix }: PaymentStepProps) {
   const router = useRouter();
 
@@ -1208,6 +1248,18 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [sdkReady, setSdkReady] = useState(false);
+  const [cardFieldsLoading, setCardFieldsLoading] = useState(false);
+  const [cardFieldsReady, setCardFieldsReady] = useState(false);
+  const [headlessError, setHeadlessError] = useState<string | null>(null);
+  const [hostedFieldErrors, setHostedFieldErrors] =
+    useState<HostedFieldErrors>(EMPTY_HOSTED_FIELD_ERRORS);
+
+  const checkoutServiceRef = useRef<CheckoutService | null>(null);
+  const sdkPaymentMethodsRef = useRef<CheckoutSdkPaymentMethod[]>([]);
+  const activePaymentMethodRef = useRef<ActivePaymentMethodRef | null>(null);
+  const activePaymentMethodKeyRef = useRef<string | null>(null);
+
   const [useLoan, setUseLoan] = useState(false);
   const [loanAmount, setLoanAmount] = useState(
     Math.min(session.loan.approvedAmount, session.grandTotal),
@@ -1216,6 +1268,59 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
   const maxLoan = Math.min(session.loan.approvedAmount, session.grandTotal);
   const showLoan = session.loanEnabled && session.loan.eligible;
   const dueTodayWithLoan = Math.max(session.grandTotal - loanAmount, 0);
+
+  const hostedFieldIds = useMemo<HostedFieldIds>(() => {
+    const suffix = paymentMethod.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase() || 'card';
+
+    return {
+      cardNumber: `co-card-number-${suffix}`,
+      cardExpiry: `co-card-expiry-${suffix}`,
+      cardName: `co-card-name-${suffix}`,
+      cardCode: `co-card-code-${suffix}`,
+    };
+  }, [paymentMethod]);
+
+  useEffect(() => {
+    const service = createCheckoutService({ host: window.location.origin });
+    checkoutServiceRef.current = service;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        await service.loadCheckout(session.checkoutId);
+        const state = await service.loadPaymentMethods();
+
+        if (cancelled) {
+          return;
+        }
+
+        sdkPaymentMethodsRef.current = state.data.getPaymentMethods() ?? [];
+        setSdkReady(true);
+        setHeadlessError(null);
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+
+        setSdkReady(false);
+        setHeadlessError(
+          err instanceof Error
+            ? err.message
+            : 'Could not initialize secure payment service.',
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+
+      const active = activePaymentMethodRef.current;
+      if (active) {
+        void service.deinitializePayment(active).catch(() => undefined);
+      }
+    };
+  }, [session.checkoutId]);
 
   // ── Load payment methods from BigCommerce payment settings ────────────────
 
@@ -1244,6 +1349,155 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
       }
     })();
   }, [session.checkoutId]);
+
+  const resolveSdkMethod = useCallback((method: SdkPaymentMethod) => {
+    return resolveSdkMethodForSelection(method, sdkPaymentMethodsRef.current);
+  }, []);
+
+  useEffect(() => {
+    const selectedMethod = availableMethods.find((m) => m.id === paymentMethod);
+    const service = checkoutServiceRef.current;
+
+    if (!selectedMethod || isManualMethod(selectedMethod)) {
+      setCardFieldsLoading(false);
+      setCardFieldsReady(false);
+      setHeadlessError(null);
+      setHostedFieldErrors(EMPTY_HOSTED_FIELD_ERRORS);
+      return;
+    }
+
+    const sdkMethod = resolveSdkMethod(selectedMethod);
+
+    if (!sdkMethod) {
+      setCardFieldsLoading(false);
+      setCardFieldsReady(false);
+      setHeadlessError('The selected method is unavailable for headless checkout.');
+      return;
+    }
+
+    const cardSelected = isCardLikeMethod(selectedMethod) || isCardSdkMethod(sdkMethod);
+
+    if (!cardSelected) {
+      setCardFieldsLoading(false);
+      setCardFieldsReady(false);
+      setHeadlessError(null);
+      setHostedFieldErrors(EMPTY_HOSTED_FIELD_ERRORS);
+      return;
+    }
+
+    if (!service || !sdkReady) {
+      setCardFieldsLoading(true);
+      setCardFieldsReady(false);
+      return;
+    }
+
+    const nextKey = getUniqueMethodKey(sdkMethod.id, sdkMethod.gateway);
+
+    if (activePaymentMethodKeyRef.current === nextKey) {
+      setCardFieldsLoading(false);
+      setCardFieldsReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    setCardFieldsLoading(true);
+    setCardFieldsReady(false);
+    setHeadlessError(null);
+    setHostedFieldErrors(EMPTY_HOSTED_FIELD_ERRORS);
+
+    void (async () => {
+      try {
+        const active = activePaymentMethodRef.current;
+        if (active) {
+          await service.deinitializePayment(active);
+        }
+
+        const formOptions: LegacyHostedFormOptions = {
+          fields: {
+            cardNumber: {
+              accessibilityLabel: 'Card number',
+              containerId: hostedFieldIds.cardNumber,
+            },
+            cardExpiry: {
+              accessibilityLabel: 'Expiry date',
+              containerId: hostedFieldIds.cardExpiry,
+              placeholder: 'MM / YY',
+            },
+            cardName: {
+              accessibilityLabel: 'Name on card',
+              containerId: hostedFieldIds.cardName,
+            },
+            cardCode: {
+              accessibilityLabel: 'Security code',
+              containerId: hostedFieldIds.cardCode,
+            },
+          },
+          onValidate: ({ errors = {} }) => {
+            const nextErrors: HostedFieldErrors = { ...EMPTY_HOSTED_FIELD_ERRORS };
+            const indexedErrors = errors as Record<string, Array<{ type?: string }> | undefined>;
+
+            const resolveErrorType = (fieldType: string): string => {
+              const fieldErrors = indexedErrors[fieldType];
+              const firstErrorType = fieldErrors?.[0]?.type;
+
+              return mapHostedFieldError(firstErrorType);
+            };
+
+            nextErrors.cardNumber = resolveErrorType('cardNumber');
+            nextErrors.cardExpiry = resolveErrorType('cardExpiry');
+            nextErrors.cardName = resolveErrorType('cardName');
+            nextErrors.cardCode = resolveErrorType('cardCode');
+
+            setHostedFieldErrors(nextErrors);
+          },
+        };
+
+        await service.initializePayment({
+          methodId: sdkMethod.id,
+          gatewayId: sdkMethod.gateway,
+          integrations: [
+            createNoPaymentStrategy,
+            createCreditCardPaymentStrategy,
+            createCyberSourcePaymentStrategy,
+            createCyberSourceV2PaymentStrategy,
+            createSagePayPaymentStrategy,
+            createCBAMPGSPaymentStrategy,
+          ],
+          creditCard: { form: formOptions },
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        activePaymentMethodRef.current = {
+          methodId: sdkMethod.id,
+          gatewayId: sdkMethod.gateway,
+        };
+        activePaymentMethodKeyRef.current = nextKey;
+        setCardFieldsReady(true);
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+
+        setCardFieldsReady(false);
+        setHeadlessError(
+          err instanceof Error
+            ? err.message
+            : 'Could not initialize secure card fields for this method.',
+        );
+      } finally {
+        if (!cancelled) {
+          setCardFieldsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [availableMethods, paymentMethod, resolveSdkMethod, hostedFieldIds, sdkReady]);
 
   // ── Submit ────────────────────────────────────────────────────────────────
 
@@ -1302,23 +1556,57 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
           return;
         }
 
-        // Online and wallet methods continue on BC-hosted secure checkout,
-        // still driven by merchant-level payment settings for this channel.
-        const redirectRes = await fetch(
-          `/api/checkout/checkout-url?checkoutId=${encodeURIComponent(session.checkoutId)}`,
-        );
-        const redirectData = (await redirectRes.json()) as {
-          checkoutUrl?: string;
-          error?: string;
-        };
+        const service = checkoutServiceRef.current;
+        if (!service || !sdkReady) {
+          throw new Error('Secure payment is still initializing. Please try again.');
+        }
 
-        if (!redirectRes.ok || !redirectData.checkoutUrl) {
+        const sdkMethod = resolveSdkMethod(selectedMethod);
+        if (!sdkMethod) {
+          throw new Error('Selected method is unavailable for headless checkout.');
+        }
+
+        const cardSelected = isCardLikeMethod(selectedMethod) || isCardSdkMethod(sdkMethod);
+        if (cardSelected && !cardFieldsReady) {
           throw new Error(
-            redirectData.error ?? 'Unable to continue to BigCommerce secure checkout.',
+            cardFieldsLoading
+              ? 'Secure card fields are still loading. Please wait a moment.'
+              : 'Secure card fields are not ready. Please reselect your payment method.',
           );
         }
 
-        window.location.assign(redirectData.checkoutUrl);
+        try {
+          const state = await service.submitOrder({
+            payment: {
+              methodId: sdkMethod.id,
+              gatewayId: sdkMethod.gateway,
+            },
+          });
+
+          const orderId = state.data.getOrder()?.orderId;
+          if (!orderId) {
+            throw new Error('Order was submitted but no order ID was returned.');
+          }
+
+          const params = new URLSearchParams({
+            orderId: String(orderId),
+            total: String(session.grandTotal),
+            paid: String(session.grandTotal),
+            loanApplied: '0',
+            email,
+            currency: session.currencyCode,
+          });
+          router.push(`${localePrefix}/checkout/order-confirmation?${params.toString()}`);
+          return;
+        } catch (sdkErr) {
+          const redirectUrl = getProviderRedirectUrl(sdkErr);
+          if (redirectUrl) {
+            window.location.assign(redirectUrl);
+            return;
+          }
+
+          throw sdkErr;
+        }
       } catch (err) {
         setError(
           err instanceof Error ? err.message : 'Something went wrong. Please try again.',
@@ -1333,6 +1621,10 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
       useLoan,
       loanAmount,
       availableMethods,
+      cardFieldsLoading,
+      cardFieldsReady,
+      sdkReady,
+      resolveSdkMethod,
       router,
       localePrefix,
       email,
@@ -1341,7 +1633,12 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
 
   const selectedMethod = availableMethods.find((m) => m.id === paymentMethod);
   const manualSelected = selectedMethod ? isManualMethod(selectedMethod) : false;
+  const cardSelected = selectedMethod ? isCardLikeMethod(selectedMethod) : false;
   const showLoanForSelection = showLoan && manualSelected;
+  const disableSubmit =
+    submitting ||
+    !paymentMethod ||
+    (!manualSelected && cardSelected && (cardFieldsLoading || !cardFieldsReady));
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -1454,12 +1751,63 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
             </div>
           )}
 
-          {!manualSelected && selectedMethod && (
+          {!manualSelected && selectedMethod && cardSelected && (
             <div className="card section-gap">
-              <p className="section-label">Secure payment handoff</p>
+              <p className="section-label">Card details</p>
+
+              {cardFieldsLoading && (
+                <p className="hosted-fields-loading">
+                  <Spinner /> Loading secure card fields…
+                </p>
+              )}
+
+              {headlessError ? (
+                <div className="hosted-fields-unavailable">{headlessError}</div>
+              ) : (
+                <div className="card-form">
+                  <label className="form-field form-field-full">
+                    <span className="field-label">Card number</span>
+                    <div id={hostedFieldIds.cardNumber} className="hosted-field-container" />
+                    {hostedFieldErrors.cardNumber && (
+                      <span className="hosted-field-error">{hostedFieldErrors.cardNumber}</span>
+                    )}
+                  </label>
+
+                  <div className="form-row form-row-cols">
+                    <label className="form-field">
+                      <span className="field-label">Expiry</span>
+                      <div id={hostedFieldIds.cardExpiry} className="hosted-field-container" />
+                      {hostedFieldErrors.cardExpiry && (
+                        <span className="hosted-field-error">{hostedFieldErrors.cardExpiry}</span>
+                      )}
+                    </label>
+                    <label className="form-field">
+                      <span className="field-label">Security code</span>
+                      <div id={hostedFieldIds.cardCode} className="hosted-field-container" />
+                      {hostedFieldErrors.cardCode && (
+                        <span className="hosted-field-error">{hostedFieldErrors.cardCode}</span>
+                      )}
+                    </label>
+                  </div>
+
+                  <label className="form-field form-field-full">
+                    <span className="field-label">Name on card</span>
+                    <div id={hostedFieldIds.cardName} className="hosted-field-container" />
+                    {hostedFieldErrors.cardName && (
+                      <span className="hosted-field-error">{hostedFieldErrors.cardName}</span>
+                    )}
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!manualSelected && selectedMethod && !cardSelected && (
+            <div className="card section-gap">
+              <p className="section-label">Secure payment processing</p>
               <p style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.6 }}>
-                You selected <strong>{selectedMethod.name}</strong>. After you continue, BigCommerce
-                secure checkout will complete payment using your merchant-configured payment settings.
+                You selected <strong>{selectedMethod.name}</strong>. This method is processed from the
+                same checkout flow and may open a secure provider authorization window.
               </p>
             </div>
           )}
@@ -1469,7 +1817,7 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
           <button
             type="submit"
             className={`cta-btn${submitting ? ' cta-btn-loading' : ''}`}
-            disabled={submitting || !paymentMethod}
+            disabled={disableSubmit}
           >
             {submitting ? (
               <><Spinner /> Processing…</>
@@ -1481,8 +1829,10 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
               'Place order — pay by check'
             ) : manualSelected ? (
               `Place order — ${fmt(showLoanForSelection && useLoan ? dueTodayWithLoan : session.grandTotal)}`
+            ) : cardSelected ? (
+              'Place order securely'
             ) : (
-              'Continue to BigCommerce secure payment'
+              'Continue to secure authorization'
             )}
           </button>
         </section>
@@ -1615,6 +1965,128 @@ function inferMethodKind(m: SdkPaymentMethod): 'manual' | 'card' | 'wallet' | 'o
 
 function isManualMethod(m: SdkPaymentMethod): boolean {
   return inferMethodKind(m) === 'manual';
+}
+
+function isCardLikeMethod(m: SdkPaymentMethod): boolean {
+  const method = (m.method || '').toLowerCase();
+  const id = m.id.toLowerCase();
+
+  return (
+    method.includes('credit-card') ||
+    method.includes('card') ||
+    id.includes('.card') ||
+    id.includes('credit') ||
+    id === 'bigpaypay'
+  );
+}
+
+function isCardSdkMethod(m: CheckoutSdkPaymentMethod): boolean {
+  const method = (m.method || '').toLowerCase();
+  const id = m.id.toLowerCase();
+
+  return method === 'credit-card' || method.includes('card') || id.includes('card');
+}
+
+function normalizeMethodToken(value?: string): string {
+  return (value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function getUniqueMethodKey(methodId: string, gatewayId?: string): string {
+  return `${methodId}::${gatewayId ?? ''}`;
+}
+
+function resolveSdkMethodForSelection(
+  selectedMethod: SdkPaymentMethod,
+  sdkMethods: CheckoutSdkPaymentMethod[],
+): CheckoutSdkPaymentMethod | undefined {
+  if (sdkMethods.length === 0) {
+    return undefined;
+  }
+
+  const byExactIdAndGateway = sdkMethods.find(
+    (m) => m.id === selectedMethod.id && m.gateway === selectedMethod.gateway,
+  );
+
+  if (byExactIdAndGateway) {
+    return byExactIdAndGateway;
+  }
+
+  const byExactId = sdkMethods.find((m) => m.id === selectedMethod.id);
+  if (byExactId) {
+    return byExactId;
+  }
+
+  const selectedId = normalizeMethodToken(selectedMethod.id);
+  const selectedGateway = normalizeMethodToken(selectedMethod.gateway);
+
+  const byNormalized = sdkMethods.find((m) => {
+    const methodId = normalizeMethodToken(m.id);
+    const gatewayId = normalizeMethodToken(m.gateway);
+
+    if (selectedGateway) {
+      return methodId === selectedId && gatewayId === selectedGateway;
+    }
+
+    return methodId === selectedId;
+  });
+
+  if (byNormalized) {
+    return byNormalized;
+  }
+
+  const selectedType = (selectedMethod.method || '').toLowerCase();
+
+  if (isCardLikeMethod(selectedMethod)) {
+    return sdkMethods.find((m) => isCardSdkMethod(m));
+  }
+
+  if (selectedType.includes('paypal')) {
+    return sdkMethods.find((m) => (m.method || '').toLowerCase().includes('paypal'));
+  }
+
+  if (selectedType.includes('google')) {
+    return sdkMethods.find((m) => (m.method || '').toLowerCase().includes('google'));
+  }
+
+  if (selectedType.includes('apple')) {
+    return sdkMethods.find((m) => (m.method || '').toLowerCase().includes('apple'));
+  }
+
+  if (selectedType.includes('amazon')) {
+    return sdkMethods.find((m) => (m.method || '').toLowerCase().includes('amazon'));
+  }
+
+  return sdkMethods[0];
+}
+
+function mapHostedFieldError(errorType?: string): string {
+  switch (errorType) {
+    case 'required':
+      return 'Required field.';
+    case 'invalid_card_number':
+      return 'Invalid card number.';
+    case 'invalid_card_expiry':
+      return 'Invalid expiry date.';
+    case 'invalid_card_name':
+      return 'Invalid cardholder name.';
+    case 'invalid_card_code':
+      return 'Invalid security code.';
+    default:
+      return '';
+  }
+}
+
+function getProviderRedirectUrl(error: unknown): string | undefined {
+  const maybeError = error as {
+    body?: { type?: string };
+    headers?: { location?: string };
+  };
+
+  if (maybeError.body?.type === 'provider_error' && maybeError.headers?.location) {
+    return maybeError.headers.location;
+  }
+
+  return undefined;
 }
 
 function manualInstruction(method: string): string {

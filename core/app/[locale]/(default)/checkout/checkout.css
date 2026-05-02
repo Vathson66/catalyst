@@ -264,6 +264,12 @@
   background: #fff5f5; border: 1px solid #fca5a5;
   border-radius: 8px; padding: 12px 16px; color: #b91c1c; font-size: 14px;
 }
+.checkout-shell .hosted-field-error {
+  display: block;
+  color: var(--danger);
+  font-size: 12px;
+  margin-top: 6px;
+}
 
 /* ── Loan approved banner ───────────────────────────────────────────────── */
 
