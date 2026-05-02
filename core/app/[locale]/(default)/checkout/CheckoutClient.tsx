@@ -25,6 +25,9 @@ import type { CheckoutSession } from '~/lib/checkout/types';
 type Step = 'guest' | 'shipping' | 'payment';
 type PaymentKey = string;
 
+const HOSTED_CHECKOUT_RETRY_DELAY_MS = 350;
+const HOSTED_CHECKOUT_MAX_ATTEMPTS = 2;
+
 interface SavedAddress {
   id: number;
   firstName: string;
@@ -1281,13 +1284,51 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
   }, [paymentMethod]);
 
   useEffect(() => {
-    const service = createCheckoutService({ host: window.location.origin });
-    checkoutServiceRef.current = service;
-
     let cancelled = false;
 
     void (async () => {
       try {
+        const probe = await fetch(
+          `/api/storefront/checkout/${encodeURIComponent(session.checkoutId)}?include=payments`,
+          {
+            headers: {
+              Accept: 'application/vnd.bc.v1+json',
+            },
+          },
+        );
+
+        if (!probe.ok) {
+          const bodyText = await probe.text();
+          let detail = `HTTP ${probe.status}`;
+
+          if (bodyText) {
+            try {
+              const payload = JSON.parse(bodyText) as {
+                detail?: string;
+                title?: string;
+                error?: string;
+              };
+              detail = payload.detail ?? payload.title ?? payload.error ?? detail;
+            } catch {
+              detail = bodyText;
+            }
+          }
+
+          if (cancelled) {
+            return;
+          }
+
+          setSdkReady(false);
+          setHeadlessError(
+            `In-page secure fields are unavailable for this checkout (${detail}). Continue using secure hosted checkout.`,
+          );
+
+          return;
+        }
+
+        const service = createCheckoutService({ host: window.location.origin });
+        checkoutServiceRef.current = service;
+
         await service.loadCheckout(session.checkoutId);
         const state = await service.loadPaymentMethods();
 
@@ -1316,7 +1357,8 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
       cancelled = true;
 
       const active = activePaymentMethodRef.current;
-      if (active) {
+      const service = checkoutServiceRef.current;
+      if (active && service) {
         void service.deinitializePayment(active).catch(() => undefined);
       }
     };
@@ -1353,6 +1395,11 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
   const resolveSdkMethod = useCallback((method: SdkPaymentMethod) => {
     return resolveSdkMethodForSelection(method, sdkPaymentMethodsRef.current);
   }, []);
+
+  const redirectToHostedCheckout = useCallback(async () => {
+    const checkoutUrl = await resolveHostedCheckoutUrl(session.checkoutId);
+    window.location.assign(checkoutUrl);
+  }, [session.checkoutId]);
 
   useEffect(() => {
     const selectedMethod = availableMethods.find((m) => m.id === paymentMethod);
@@ -1556,6 +1603,13 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
           return;
         }
 
+        // Track A first: only use hosted checkout when secure in-page APIs
+        // are not available for this environment/checkout context.
+        if (headlessError) {
+          await redirectToHostedCheckout();
+          return;
+        }
+
         const service = checkoutServiceRef.current;
         if (!service || !sdkReady) {
           throw new Error('Secure payment is still initializing. Please try again.');
@@ -1605,6 +1659,14 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
             return;
           }
 
+          if (shouldFallbackToHostedCheckout(sdkErr)) {
+            setHeadlessError(
+              'In-page secure payment is temporarily unavailable. Continue using secure hosted checkout.',
+            );
+            await redirectToHostedCheckout();
+            return;
+          }
+
           throw sdkErr;
         }
       } catch (err) {
@@ -1624,6 +1686,8 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
       cardFieldsLoading,
       cardFieldsReady,
       sdkReady,
+      headlessError,
+      redirectToHostedCheckout,
       resolveSdkMethod,
       router,
       localePrefix,
@@ -1634,11 +1698,12 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
   const selectedMethod = availableMethods.find((m) => m.id === paymentMethod);
   const manualSelected = selectedMethod ? isManualMethod(selectedMethod) : false;
   const cardSelected = selectedMethod ? isCardLikeMethod(selectedMethod) : false;
+  const useHostedFallback = !manualSelected && Boolean(headlessError);
   const showLoanForSelection = showLoan && manualSelected;
   const disableSubmit =
     submitting ||
     !paymentMethod ||
-    (!manualSelected && cardSelected && (cardFieldsLoading || !cardFieldsReady));
+    (!manualSelected && cardSelected && !useHostedFallback && (cardFieldsLoading || !cardFieldsReady));
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -1829,6 +1894,8 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
               'Place order — pay by check'
             ) : manualSelected ? (
               `Place order — ${fmt(showLoanForSelection && useLoan ? dueTodayWithLoan : session.grandTotal)}`
+            ) : useHostedFallback ? (
+              'Continue in secure hosted checkout'
             ) : cardSelected ? (
               'Place order securely'
             ) : (
@@ -2074,6 +2141,121 @@ function mapHostedFieldError(errorType?: string): string {
     default:
       return '';
   }
+}
+
+interface HostedCheckoutUrlResponse {
+  checkoutUrl?: string;
+  error?: string;
+  detail?: string;
+}
+
+async function resolveHostedCheckoutUrl(checkoutId: string): Promise<string> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= HOSTED_CHECKOUT_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const res = await fetch(
+        `/api/checkout/checkout-url?checkoutId=${encodeURIComponent(checkoutId)}`,
+      );
+      const payload = await parseHostedCheckoutResponse(res);
+
+      if (res.ok && payload.checkoutUrl) {
+        return payload.checkoutUrl;
+      }
+
+      const message =
+        payload.error ??
+        payload.detail ??
+        `Could not open secure hosted checkout [${res.status}].`;
+      const retryable = res.status === 429 || res.status >= 500;
+
+      if (!retryable || attempt === HOSTED_CHECKOUT_MAX_ATTEMPTS) {
+        throw new Error(message);
+      }
+
+      lastError = new Error(message);
+    } catch (err) {
+      const nextError =
+        err instanceof Error
+          ? err
+          : new Error('Could not open secure hosted checkout.');
+
+      if (attempt === HOSTED_CHECKOUT_MAX_ATTEMPTS) {
+        throw nextError;
+      }
+
+      lastError = nextError;
+    }
+
+    await sleep(HOSTED_CHECKOUT_RETRY_DELAY_MS * attempt);
+  }
+
+  throw lastError ?? new Error('Could not open secure hosted checkout.');
+}
+
+async function parseHostedCheckoutResponse(
+  res: Response,
+): Promise<HostedCheckoutUrlResponse> {
+  const bodyText = await res.text();
+
+  if (!bodyText) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(bodyText) as HostedCheckoutUrlResponse;
+  } catch {
+    return { detail: bodyText };
+  }
+}
+
+function shouldFallbackToHostedCheckout(error: unknown): boolean {
+  const maybeError = error as {
+    message?: string;
+    status?: number;
+    body?: {
+      status?: number;
+      type?: string;
+      title?: string;
+      detail?: string;
+    };
+  };
+
+  const status = maybeError.status ?? maybeError.body?.status;
+
+  if (typeof status === 'number') {
+    if ([401, 403, 404, 409].includes(status)) {
+      return true;
+    }
+
+    if (status >= 500) {
+      return true;
+    }
+  }
+
+  const signal = [
+    maybeError.message,
+    maybeError.body?.type,
+    maybeError.body?.title,
+    maybeError.body?.detail,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return (
+    signal.includes('checkout not found') ||
+    signal.includes('unauthorized') ||
+    signal.includes('forbidden') ||
+    signal.includes('bigpaybaseurl') ||
+    signal.includes('headless checkout')
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function getProviderRedirectUrl(error: unknown): string | undefined {
