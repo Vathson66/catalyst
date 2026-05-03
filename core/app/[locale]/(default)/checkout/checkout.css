@@ -421,6 +421,8 @@
 }
 .checkout-shell .cta-btn:hover:not(:disabled) { opacity: 0.88; }
 .checkout-shell .cta-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.checkout-shell .cta-btn-loading { pointer-events: none; }
+.checkout-shell .cta-btn-loading .spinner { margin-right: 2px; }
 
 .checkout-shell .cta-btn-ghost {
   display: flex; align-items: center; justify-content: center;

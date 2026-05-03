@@ -98,6 +98,16 @@ interface SignedInCustomer {
   addresses: SavedAddress[];
 }
 
+interface CheckoutAuthMeResponse {
+  authenticated: boolean;
+  customerId?: number;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  addresses?: SavedAddress[];
+}
+
 function readStringValue(...values: unknown[]): string {
   for (const value of values) {
     if (typeof value === 'string') {
@@ -402,7 +412,7 @@ export function CheckoutClient({ session, initialLoan }: Props) {
   const [step, setStep] = useState<Step>('guest');
 
   // Guest / Sign-in
-  const [guestEmail, setGuestEmail] = useState('');
+  const [guestEmail, setGuestEmail] = useState(session.customer.email ?? '');
   const [signInPassword, setSignInPassword] = useState('');
   const [showSignIn, setShowSignIn] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
@@ -421,14 +431,14 @@ export function CheckoutClient({ session, initialLoan }: Props) {
   // Shipping address
   const [shippingAddr, setShippingAddr] = useState<CheckoutAddress>({
     ...EMPTY_CHECKOUT_ADDRESS,
-    email: guestEmail,
+    email: session.customer.email ?? '',
   });
 
   // Billing address
   const [sameAsShipping, setSameAsShipping] = useState(true);
   const [billingAddr, setBillingAddr] = useState<CheckoutAddress>({
     ...EMPTY_CHECKOUT_ADDRESS,
-    email: guestEmail,
+    email: session.customer.email ?? '',
   });
 
   // Shipping options
@@ -439,6 +449,9 @@ export function CheckoutClient({ session, initialLoan }: Props) {
   const [submittingShipping, setSubmittingShipping] = useState(false);
   const shippingSubmitLockRef = useRef(false);
   const [checkoutDraftHydrated, setCheckoutDraftHydrated] = useState(false);
+  const [redirectingToHostedCheckout, setRedirectingToHostedCheckout] = useState(false);
+  const redirectingToHostedCheckoutRef = useRef(false);
+  const sessionCustomerBootstrapRef = useRef(false);
 
   // UI state
   const [error, setError] = useState<string | null>(null);
@@ -540,6 +553,139 @@ export function CheckoutClient({ session, initialLoan }: Props) {
     session.checkoutId,
     shippingAddr,
     smsConsent,
+    step,
+  ]);
+
+  useEffect(() => {
+    if (!checkoutDraftHydrated || sessionCustomerBootstrapRef.current || signedInCustomer) {
+      return;
+    }
+
+    sessionCustomerBootstrapRef.current = true;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const res = await fetch('/api/checkout/auth/me', {
+          cache: 'no-store',
+        });
+
+        if (!res.ok) {
+          return;
+        }
+
+        const data = (await res.json()) as CheckoutAuthMeResponse;
+
+        if (cancelled || !data.authenticated) {
+          return;
+        }
+
+        const email = readStringValue(data.email, guestEmail, session.customer.email);
+
+        if (!email) {
+          return;
+        }
+
+        const normalisedAddresses = normaliseSavedAddresses(data.addresses);
+        const customerId = data.customerId;
+
+        if (typeof customerId !== 'number' || customerId <= 0) {
+          setGuestEmail((prev) => prev || email);
+          setShippingAddr((prev) => ({
+            ...prev,
+            email: prev.email || email,
+          }));
+          setBillingAddr((prev) => ({
+            ...prev,
+            email: prev.email || email,
+          }));
+
+          return;
+        }
+
+        const customer: SignedInCustomer = {
+          customerId,
+          firstName: readStringValue(data.firstName),
+          lastName: readStringValue(data.lastName),
+          email,
+          phone: readStringValue(data.phone),
+          addresses: normalisedAddresses,
+        };
+
+        const hasCheckoutProgress =
+          step !== 'guest' ||
+          Boolean(guestEmail) ||
+          Boolean(
+            shippingAddr.firstName ||
+              shippingAddr.lastName ||
+              shippingAddr.address1 ||
+              shippingAddr.city ||
+              shippingAddr.postalCode,
+          );
+
+        setSignedInCustomer(customer);
+        setFoundCustomer({
+          customerId: customer.customerId,
+          firstName: customer.firstName,
+          lastName: customer.lastName,
+        });
+        setLookupStatus('idle');
+        setShowSignIn(false);
+        setSignInPassword('');
+        setError(null);
+        setGuestEmail((prev) => prev || customer.email);
+
+        if (hasCheckoutProgress) {
+          return;
+        }
+
+        if (customer.addresses.length > 0) {
+          const first = customer.addresses[0]!;
+
+          setSelectedAddressId(first.id);
+          setShippingAddr({
+            firstName: first.firstName,
+            lastName: first.lastName,
+            email: customer.email,
+            phone: first.phone || customer.phone,
+            address1: first.address1,
+            address2: first.address2,
+            city: first.city,
+            state: first.state,
+            postalCode: first.postalCode,
+            country: first.countryCode,
+          });
+        } else {
+          setSelectedAddressId('new');
+          setShippingAddr((prev) => ({
+            ...prev,
+            email: customer.email,
+            firstName: prev.firstName || customer.firstName,
+            lastName: prev.lastName || customer.lastName,
+            phone: prev.phone || customer.phone,
+          }));
+        }
+
+        setStep('shipping');
+      } catch {
+        // If this call fails, checkout still works via guest/manual sign in flows.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    checkoutDraftHydrated,
+    guestEmail,
+    session.customer.email,
+    shippingAddr.address1,
+    shippingAddr.city,
+    shippingAddr.firstName,
+    shippingAddr.lastName,
+    shippingAddr.postalCode,
+    signedInCustomer,
     step,
   ]);
 
@@ -850,6 +996,8 @@ export function CheckoutClient({ session, initialLoan }: Props) {
       setError(null);
       setSubmittingShipping(true);
       setLoadingShippingOpts(true);
+      redirectingToHostedCheckoutRef.current = false;
+      setRedirectingToHostedCheckout(false);
 
       try {
         const sdk = sdkRef.current;
@@ -903,6 +1051,10 @@ export function CheckoutClient({ session, initialLoan }: Props) {
           await sdk.selectShippingOption(shippingOptionId);
         }
 
+        const hostedCheckoutUrlPromise = HOSTED_CHECKOUT_FLOW_CONFIG.enabled
+          ? resolveHostedCheckoutUrl(session.checkoutId)
+          : null;
+
         const billing = sameAsShipping ? shippingAddr : billingAddr;
         await sdk.updateBillingAddress({
           firstName: billing.firstName,
@@ -918,7 +1070,12 @@ export function CheckoutClient({ session, initialLoan }: Props) {
         });
 
         if (HOSTED_CHECKOUT_FLOW_CONFIG.enabled) {
-          const checkoutUrl = await resolveHostedCheckoutUrl(session.checkoutId);
+          setRedirectingToHostedCheckout(true);
+          redirectingToHostedCheckoutRef.current = true;
+
+          const checkoutUrl = hostedCheckoutUrlPromise
+            ? await hostedCheckoutUrlPromise
+            : await resolveHostedCheckoutUrl(session.checkoutId);
           const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, {
             localePrefix,
             email: shippingAddr.email || guestEmail,
@@ -937,9 +1094,13 @@ export function CheckoutClient({ session, initialLoan }: Props) {
             ? err.message
             : 'Could not process shipping details. Please try again.',
         );
+        redirectingToHostedCheckoutRef.current = false;
+        setRedirectingToHostedCheckout(false);
       } finally {
-        setLoadingShippingOpts(false);
-        setSubmittingShipping(false);
+        if (!redirectingToHostedCheckoutRef.current) {
+          setLoadingShippingOpts(false);
+          setSubmittingShipping(false);
+        }
         shippingSubmitLockRef.current = false;
       }
     },
@@ -1510,7 +1671,13 @@ export function CheckoutClient({ session, initialLoan }: Props) {
 
             {error && <div className="error-banner">{error}</div>}
 
-            {loadingShippingOpts && (
+            {redirectingToHostedCheckout && (
+              <p className="lookup-checking">
+                <Spinner /> Redirecting to secure hosted checkout…
+              </p>
+            )}
+
+            {loadingShippingOpts && !redirectingToHostedCheckout && (
               <p className="lookup-checking">
                 <Spinner /> {shippingConfirmed ? 'Confirming your order details…' : 'Fetching shipping options…'}
               </p>
@@ -1518,10 +1685,12 @@ export function CheckoutClient({ session, initialLoan }: Props) {
 
             <button
               type="submit"
-              className={`cta-btn${submittingShipping ? ' cta-btn-loading' : ''}`}
-              disabled={submittingShipping || loadingShippingOpts}
+              className={`cta-btn${submittingShipping || redirectingToHostedCheckout ? ' cta-btn-loading' : ''}`}
+              disabled={submittingShipping || loadingShippingOpts || redirectingToHostedCheckout}
             >
-              {submittingShipping || loadingShippingOpts ? (
+              {redirectingToHostedCheckout ? (
+                <><Spinner /> Redirecting to secure hosted checkout…</>
+              ) : submittingShipping || loadingShippingOpts ? (
                 <><Spinner /> {shippingConfirmed ? 'Confirming details…' : 'Preparing checkout…'}</>
               ) : HOSTED_CHECKOUT_FLOW_CONFIG.enabled ? (
                 'Continue to secure payment →'
