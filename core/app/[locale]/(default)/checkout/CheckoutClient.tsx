@@ -1081,8 +1081,9 @@ export function CheckoutClient({ session, initialLoan }: Props) {
             email: shippingAddr.email || guestEmail,
             currency: session.currencyCode,
           });
+          const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl);
 
-          window.location.assign(hostedCheckoutUrl);
+          window.location.assign(hostedLaunchUrl);
 
           return;
         }
@@ -2228,8 +2229,9 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
       email,
       currency: session.currencyCode,
     });
+    const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl);
 
-    window.location.assign(hostedCheckoutUrl);
+    window.location.assign(hostedLaunchUrl);
   }, [email, localePrefix, session.checkoutId, session.currencyCode]);
 
   useEffect(() => {
@@ -3045,6 +3047,13 @@ interface HostedCheckoutUrlResponse {
   detail?: string;
 }
 
+interface HostedLaunchUrlResponse {
+  launchUrl?: string;
+  identityCarried?: boolean;
+  error?: string;
+  detail?: string;
+}
+
 async function resolveHostedCheckoutUrl(checkoutId: string): Promise<string> {
   let lastError: Error | null = null;
 
@@ -3201,4 +3210,42 @@ function MethodRadio({ checked, onChange, label, children }: MethodRadioProps) {
       <span className={`method-radio-circle${checked ? ' method-radio-circle-selected' : ''}`} />
     </button>
   );
+}
+
+async function resolveHostedLaunchUrl(checkoutUrl: string): Promise<string> {
+  const response = await fetch('/api/checkout/auth/hosted-login-url', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ checkoutUrl }),
+  });
+
+  const payload = await parseHostedLaunchUrlResponse(response);
+
+  if (response.ok && payload.launchUrl) {
+    return payload.launchUrl;
+  }
+
+  throw new Error(
+    payload.error ??
+      payload.detail ??
+      `Could not launch secure hosted checkout [${response.status}].`,
+  );
+}
+
+async function parseHostedLaunchUrlResponse(
+  res: Response,
+): Promise<HostedLaunchUrlResponse> {
+  const bodyText = await res.text();
+
+  if (!bodyText) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(bodyText) as HostedLaunchUrlResponse;
+  } catch {
+    return { detail: bodyText };
+  }
 }

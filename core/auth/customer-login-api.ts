@@ -24,16 +24,24 @@ export const generateCustomerLoginApiJwt = async (
   redirectTo = '/account/orders',
   additionalClaims?: Record<string, unknown>,
 ): Promise<string> => {
-  const clientId = process.env.BIGCOMMERCE_CLIENT_ID;
-  const clientSecret = process.env.BIGCOMMERCE_CLIENT_SECRET;
+  const clientId =
+    process.env.BC_CUSTOMER_LOGIN_CLIENT_ID?.trim() ||
+    process.env.BIGCOMMERCE_CLIENT_ID?.trim();
+  const clientSecret =
+    process.env.BC_CUSTOMER_LOGIN_CLIENT_SECRET?.trim() ||
+    process.env.BIGCOMMERCE_CLIENT_SECRET?.trim();
   const storeHash = process.env.BIGCOMMERCE_STORE_HASH;
 
   if (!clientSecret) {
-    throw new Error('BIGCOMMERCE_CLIENT_SECRET is not set in environment variables');
+    throw new Error(
+      'Missing Customer Login signing secret. Set BC_CUSTOMER_LOGIN_CLIENT_SECRET or BIGCOMMERCE_CLIENT_SECRET.',
+    );
   }
 
   if (!clientId) {
-    throw new Error('BIGCOMMERCE_CLIENT_ID is not set in environment variables');
+    throw new Error(
+      'Missing Customer Login signing client ID. Set BC_CUSTOMER_LOGIN_CLIENT_ID or BIGCOMMERCE_CLIENT_ID.',
+    );
   }
 
   if (!storeHash) {
