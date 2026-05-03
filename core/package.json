@@ -9,7 +9,8 @@
   "scripts": {
     "dev": "npm run generate && next dev",
     "generate": "dotenv -e .env.local -- node ./scripts/generate.cjs",
-    "build": "npm run generate && next build",
+    "build": "npm run generate && npm run checkout:prepare-assets && next build",
+    "checkout:prepare-assets": "node ./scripts/prepare-checkout-assets.cjs",
     "build:analyze": "ANALYZE=true npm run build",
     "start": "next start",
     "prelint": "next typegen",

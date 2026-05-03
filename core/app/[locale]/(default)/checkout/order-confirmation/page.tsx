@@ -10,6 +10,7 @@ interface Props {
     loanApplied?: string;
     email?: string;
     currency?: string;
+    source?: string;
   }>;
 }
 
@@ -21,6 +22,8 @@ export default async function OrderConfirmationPage({ searchParams }: Props) {
   const paid = parseFloat(p.paid ?? '0');
   const loanApplied = parseFloat(p.loanApplied ?? '0');
   const email = p.email ?? '';
+  const source = p.source ?? '';
+  const hasBreakdown = total > 0 || paid > 0 || loanApplied > 0;
 
   const fmt = (n: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(n);
@@ -46,28 +49,38 @@ export default async function OrderConfirmationPage({ searchParams }: Props) {
         )}
       </section>
 
-      <section className="card" style={{ maxWidth: 600, marginTop: 16 }}>
-        <p className="section-label">Payment breakdown</p>
+      {hasBreakdown ? (
+        <section className="card" style={{ maxWidth: 600, marginTop: 16 }}>
+          <p className="section-label">Payment breakdown</p>
 
-        <div className="summary-line">
-          <span>Order total</span>
-          <span>{fmt(total)}</span>
-        </div>
-
-        {loanApplied > 0 && (
-          <div className="summary-line summary-positive">
-            <span>Merchant loan applied</span>
-            <span>−{fmt(loanApplied)}</span>
+          <div className="summary-line">
+            <span>Order total</span>
+            <span>{fmt(total)}</span>
           </div>
-        )}
 
-        <div className="summary-divider" />
+          {loanApplied > 0 && (
+            <div className="summary-line summary-positive">
+              <span>Merchant loan applied</span>
+              <span>−{fmt(loanApplied)}</span>
+            </div>
+          )}
 
-        <div className="summary-total">
-          <span>Charged to card</span>
-          <span>{fmt(paid)}</span>
-        </div>
-      </section>
+          <div className="summary-divider" />
+
+          <div className="summary-total">
+            <span>Charged to card</span>
+            <span>{fmt(paid)}</span>
+          </div>
+        </section>
+      ) : source === 'hosted-checkout' ? (
+        <section className="card" style={{ maxWidth: 600, marginTop: 16 }}>
+          <p className="section-label">Payment received</p>
+          <p className="confirmation-sub" style={{ margin: 0 }}>
+            Your secure payment was completed on hosted checkout. We will email your receipt and
+            order details shortly.
+          </p>
+        </section>
+      ) : null}
 
       <p style={{ marginTop: 20 }}>
         <Link href="/" className="kicker back-link">

@@ -27,6 +27,11 @@ type PaymentKey = string;
 
 const HOSTED_CHECKOUT_RETRY_DELAY_MS = 350;
 const HOSTED_CHECKOUT_MAX_ATTEMPTS = 2;
+const DEFAULT_HOSTED_PAYMENT_FLOW_ENABLED = false;
+const DEFAULT_HOSTED_PAYMENT_ONLY_MODE = true;
+const DEFAULT_HOSTED_RETURN_URL_PARAM = 'catalyst_return_url';
+const DEFAULT_HOSTED_PAYMENT_ONLY_PARAM = 'catalyst_payment_only';
+const DEFAULT_HOSTED_RETURN_SOURCE = 'hosted-checkout';
 
 interface SavedAddress {
   id: number;
@@ -50,6 +55,87 @@ interface SignedInCustomer {
   addresses: SavedAddress[];
 }
 
+function readStringValue(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed !== '') {
+        return trimmed;
+      }
+    }
+  }
+
+  return '';
+}
+
+function readNumberValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function normaliseSavedAddress(value: unknown): SavedAddress | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const source = value as Record<string, unknown>;
+  const id = readNumberValue(source.id);
+
+  if (!id || id <= 0) {
+    return null;
+  }
+
+  const stateCode = readStringValue(
+    source.stateCode,
+    source.state_code,
+    source.stateAbbreviation,
+    source.state_abbreviation,
+    source.stateOrProvinceCode,
+    source.state_or_province_code,
+  );
+
+  const stateName = readStringValue(source.state, source.stateOrProvince, source.state_or_province);
+  const countryCode = readStringValue(
+    source.countryCode,
+    source.country_code,
+    source.countryIso2,
+    source.country_iso2,
+  );
+
+  return {
+    id,
+    firstName: readStringValue(source.firstName, source.first_name),
+    lastName: readStringValue(source.lastName, source.last_name),
+    address1: readStringValue(source.address1, source.address_1, source.street_1),
+    address2: readStringValue(source.address2, source.address_2, source.street_2),
+    city: readStringValue(source.city),
+    state: stateCode || stateName,
+    postalCode: readStringValue(source.postalCode, source.postal_code, source.zip),
+    countryCode: countryCode || 'US',
+    phone: readStringValue(source.phone),
+  };
+}
+
+function normaliseSavedAddresses(addresses: unknown): SavedAddress[] {
+  if (!Array.isArray(addresses)) {
+    return [];
+  }
+
+  return addresses
+    .map((address) => normaliseSavedAddress(address))
+    .filter((address): address is SavedAddress => address !== null);
+}
+
 interface LoanState {
   appliedLoan: number;
   residual: number;
@@ -59,6 +145,64 @@ interface Props {
   session: CheckoutSession;
   initialLoan: LoanState;
 }
+
+interface HostedCheckoutFlowConfig {
+  enabled: boolean;
+  paymentOnlyMode: boolean;
+  returnUrlParam: string;
+  paymentOnlyParam: string;
+  returnUrlOverride?: string;
+}
+
+function parseBooleanValue(value: string | undefined, fallbackValue: boolean): boolean {
+  if (!value) {
+    return fallbackValue;
+  }
+
+  const normalised = value.trim().toLowerCase();
+
+  if (normalised === 'true') {
+    return true;
+  }
+
+  if (normalised === 'false') {
+    return false;
+  }
+
+  return fallbackValue;
+}
+
+function sanitizeQueryParamName(value: string | undefined, fallbackValue: string): string {
+  const safeValue = (value ?? '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+
+  return safeValue || fallbackValue;
+}
+
+function resolveHostedCheckoutFlowConfig(): HostedCheckoutFlowConfig {
+  const returnUrlOverride = process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_RETURN_URL?.trim();
+
+  return {
+    enabled: parseBooleanValue(
+      process.env.NEXT_PUBLIC_CHECKOUT_FORCE_HOSTED_PAYMENT_FLOW,
+      DEFAULT_HOSTED_PAYMENT_FLOW_ENABLED,
+    ),
+    paymentOnlyMode: parseBooleanValue(
+      process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_PAYMENT_ONLY_MODE,
+      DEFAULT_HOSTED_PAYMENT_ONLY_MODE,
+    ),
+    returnUrlParam: sanitizeQueryParamName(
+      process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_RETURN_URL_PARAM,
+      DEFAULT_HOSTED_RETURN_URL_PARAM,
+    ),
+    paymentOnlyParam: sanitizeQueryParamName(
+      process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_PAYMENT_ONLY_PARAM,
+      DEFAULT_HOSTED_PAYMENT_ONLY_PARAM,
+    ),
+    returnUrlOverride: returnUrlOverride || undefined,
+  };
+}
+
+const HOSTED_CHECKOUT_FLOW_CONFIG = resolveHostedCheckoutFlowConfig();
 
 export function CheckoutClient({ session, initialLoan }: Props) {
   const router = useRouter();
@@ -215,13 +359,15 @@ export function CheckoutClient({ session, initialLoan }: Props) {
         return;
       }
 
+      const normalisedAddresses = normaliseSavedAddresses(data.addresses);
+
       const customer: SignedInCustomer = {
         customerId: data.customerId!,
         firstName: data.firstName ?? '',
         lastName: data.lastName ?? '',
         email: data.email ?? guestEmail,
         phone: data.phone ?? '',
-        addresses: data.addresses ?? [],
+        addresses: normalisedAddresses,
       };
       setSignedInCustomer(customer);
       setFoundCustomer({
@@ -266,10 +412,43 @@ export function CheckoutClient({ session, initialLoan }: Props) {
 
   const handleContinueAsCustomer = useCallback(() => {
     if (!signedInCustomer) return;
-    setShippingAddr((prev) => ({ ...prev, email: prev.email || signedInCustomer.email }));
+
+    const selectedAddress =
+      selectedAddressId && selectedAddressId !== 'new'
+        ? signedInCustomer.addresses.find((address) => address.id === selectedAddressId)
+        : signedInCustomer.addresses[0];
+
+    if (selectedAddress) {
+      setShippingAddr((prev) => ({
+        ...prev,
+        firstName: selectedAddress.firstName || prev.firstName || signedInCustomer.firstName,
+        lastName: selectedAddress.lastName || prev.lastName || signedInCustomer.lastName,
+        email: prev.email || signedInCustomer.email,
+        phone: selectedAddress.phone || prev.phone || signedInCustomer.phone,
+        address1: selectedAddress.address1 || prev.address1,
+        address2: selectedAddress.address2 || prev.address2,
+        city: selectedAddress.city || prev.city,
+        state: selectedAddress.state || prev.state,
+        postalCode: selectedAddress.postalCode || prev.postalCode,
+        country: selectedAddress.countryCode || prev.country || 'US',
+      }));
+
+      if (selectedAddressId == null) {
+        setSelectedAddressId(selectedAddress.id);
+      }
+    } else {
+      setShippingAddr((prev) => ({
+        ...prev,
+        firstName: prev.firstName || signedInCustomer.firstName,
+        lastName: prev.lastName || signedInCustomer.lastName,
+        email: prev.email || signedInCustomer.email,
+        phone: prev.phone || signedInCustomer.phone,
+      }));
+    }
+
     setError(null);
     setStep('shipping');
-  }, [signedInCustomer]);
+  }, [signedInCustomer, selectedAddressId]);
 
   // ── Auto-fetch shipping options ────────────────────────────────────────
   const fetchShippingOptions = useCallback(async (addr: typeof shippingAddr) => {
@@ -766,7 +945,19 @@ export function CheckoutClient({ session, initialLoan }: Props) {
                   email: shippingAddr.email || guestEmail,
                 });
 
-                // All context is already in component state — just advance the step.
+                if (HOSTED_CHECKOUT_FLOW_CONFIG.enabled) {
+                  const checkoutUrl = await resolveHostedCheckoutUrl(session.checkoutId);
+                  const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, {
+                    localePrefix,
+                    email: shippingAddr.email || guestEmail,
+                    currency: session.currencyCode,
+                  });
+
+                  window.location.assign(hostedCheckoutUrl);
+                  return;
+                }
+
+                // Default Track A behavior: continue to in-page payment step.
                 setStep('payment');
               } catch (err) {
                 setError(err instanceof Error ? err.message : 'Could not process shipping details. Please try again.');
@@ -1230,12 +1421,102 @@ interface ActivePaymentMethodRef {
   gatewayId?: string;
 }
 
+interface CachedPaymentMethods {
+  methods: SdkPaymentMethod[];
+  cachedAt: number;
+}
+
 const EMPTY_HOSTED_FIELD_ERRORS: HostedFieldErrors = {
   cardNumber: '',
   cardExpiry: '',
   cardName: '',
   cardCode: '',
 };
+
+const DEFAULT_PAYMENT_METHODS_CACHE_PREFIX = 'co-payment-methods-v1';
+const DEFAULT_PAYMENT_METHODS_CACHE_TTL_MS = 60 * 1000;
+const DEFAULT_PAYMENT_METHODS_CACHE_ENABLED = true;
+
+function resolvePaymentMethodsCacheConfig() {
+  const configuredPrefix = process.env.NEXT_PUBLIC_CHECKOUT_PAYMENT_METHODS_CACHE_PREFIX?.trim();
+  const configuredTtlMs = Number(process.env.NEXT_PUBLIC_CHECKOUT_PAYMENT_METHODS_CACHE_TTL_MS);
+  const enabled = parseBooleanValue(
+    process.env.NEXT_PUBLIC_CHECKOUT_PAYMENT_METHODS_CACHE_ENABLED,
+    DEFAULT_PAYMENT_METHODS_CACHE_ENABLED,
+  );
+
+  return {
+    prefix: configuredPrefix || DEFAULT_PAYMENT_METHODS_CACHE_PREFIX,
+    ttlMs:
+      Number.isFinite(configuredTtlMs) && configuredTtlMs >= 0
+        ? configuredTtlMs
+        : DEFAULT_PAYMENT_METHODS_CACHE_TTL_MS,
+    enabled,
+  };
+}
+
+const PAYMENT_METHODS_CACHE_CONFIG = resolvePaymentMethodsCacheConfig();
+
+function getPaymentMethodsCacheKey(checkoutId: string): string {
+  return `${PAYMENT_METHODS_CACHE_CONFIG.prefix}:${window.location.host}:${checkoutId}`;
+}
+
+function readCachedPaymentMethods(checkoutId: string): SdkPaymentMethod[] | null {
+  if (!PAYMENT_METHODS_CACHE_CONFIG.enabled || PAYMENT_METHODS_CACHE_CONFIG.ttlMs <= 0) {
+    return null;
+  }
+
+  try {
+    const cacheKey = getPaymentMethodsCacheKey(checkoutId);
+    const raw = window.sessionStorage.getItem(cacheKey);
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<CachedPaymentMethods>;
+    const methods = parsed.methods;
+    const cachedAt = parsed.cachedAt;
+
+    if (!Array.isArray(methods) || typeof cachedAt !== 'number') {
+      window.sessionStorage.removeItem(cacheKey);
+      return null;
+    }
+
+    if (Date.now() - cachedAt > PAYMENT_METHODS_CACHE_CONFIG.ttlMs) {
+      window.sessionStorage.removeItem(cacheKey);
+      return null;
+    }
+
+    return methods;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedPaymentMethods(checkoutId: string, methods: SdkPaymentMethod[]): void {
+  if (!PAYMENT_METHODS_CACHE_CONFIG.enabled || PAYMENT_METHODS_CACHE_CONFIG.ttlMs <= 0) {
+    return;
+  }
+
+  try {
+    const cacheKey = getPaymentMethodsCacheKey(checkoutId);
+
+    if (methods.length === 0) {
+      window.sessionStorage.removeItem(cacheKey);
+      return;
+    }
+
+    const value: CachedPaymentMethods = {
+      methods,
+      cachedAt: Date.now(),
+    };
+
+    window.sessionStorage.setItem(cacheKey, JSON.stringify(value));
+  } catch {
+    // Ignore storage failures (private mode, quota, etc.) and continue without cache.
+  }
+}
 
 function PaymentStep({ session, email, name, city, onBack, localePrefix }: PaymentStepProps) {
   const router = useRouter();
@@ -1367,8 +1648,37 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
   // ── Load payment methods from BigCommerce payment settings ────────────────
 
   useEffect(() => {
+    let cancelled = false;
+
+    const applyMethods = (methods: SdkPaymentMethod[]) => {
+      setAvailableMethods(methods);
+      setPaymentMethod((current) => {
+        if (current && methods.some((method) => method.id === current)) {
+          return current;
+        }
+
+        return methods[0]?.id ?? '';
+      });
+
+      if (methods.length > 0) {
+        setError(null);
+      } else {
+        setError('No payment methods are configured in BigCommerce for this checkout.');
+      }
+    };
+
     void (async () => {
       try {
+        const cachedMethods = readCachedPaymentMethods(session.checkoutId);
+
+        if (cachedMethods) {
+          if (!cancelled) {
+            applyMethods(cachedMethods);
+          }
+
+          return;
+        }
+
         const res = await fetch(
           `/api/checkout/payment-methods?checkoutId=${encodeURIComponent(session.checkoutId)}`,
         );
@@ -1378,18 +1688,25 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
         }
 
         const methods = data.methods ?? [];
-        setAvailableMethods(methods);
-        if (methods.length > 0 && methods[0]) {
-          setPaymentMethod(methods[0].id);
-        } else {
-          setError('No payment methods are configured in BigCommerce for this checkout.');
+        writeCachedPaymentMethods(session.checkoutId, methods);
+
+        if (!cancelled) {
+          applyMethods(methods);
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not load payment options.');
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Could not load payment options.');
+        }
       } finally {
-        setLoadingMethods(false);
+        if (!cancelled) {
+          setLoadingMethods(false);
+        }
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [session.checkoutId]);
 
   const resolveSdkMethod = useCallback((method: SdkPaymentMethod) => {
@@ -1398,8 +1715,14 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
 
   const redirectToHostedCheckout = useCallback(async () => {
     const checkoutUrl = await resolveHostedCheckoutUrl(session.checkoutId);
-    window.location.assign(checkoutUrl);
-  }, [session.checkoutId]);
+    const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, {
+      localePrefix,
+      email,
+      currency: session.currencyCode,
+    });
+
+    window.location.assign(hostedCheckoutUrl);
+  }, [email, localePrefix, session.checkoutId, session.currencyCode]);
 
   useEffect(() => {
     const selectedMethod = availableMethods.find((m) => m.id === paymentMethod);
@@ -2141,6 +2464,52 @@ function mapHostedFieldError(errorType?: string): string {
     default:
       return '';
   }
+}
+
+interface HostedCheckoutLaunchOptions {
+  localePrefix: string;
+  email?: string;
+  currency?: string;
+}
+
+function resolveHostedReturnUrl({
+  localePrefix,
+  email,
+  currency,
+}: HostedCheckoutLaunchOptions): string {
+  const fallbackPath = `${localePrefix}/checkout/order-confirmation`;
+  const target = new URL(
+    HOSTED_CHECKOUT_FLOW_CONFIG.returnUrlOverride ?? fallbackPath,
+    window.location.origin,
+  );
+
+  if (email) {
+    target.searchParams.set('email', email);
+  }
+
+  if (currency) {
+    target.searchParams.set('currency', currency);
+  }
+
+  target.searchParams.set('source', DEFAULT_HOSTED_RETURN_SOURCE);
+
+  return target.toString();
+}
+
+function buildHostedCheckoutLaunchUrl(
+  checkoutUrl: string,
+  options: HostedCheckoutLaunchOptions,
+): string {
+  const target = new URL(checkoutUrl);
+  const returnUrl = resolveHostedReturnUrl(options);
+
+  target.searchParams.set(HOSTED_CHECKOUT_FLOW_CONFIG.returnUrlParam, returnUrl);
+
+  if (HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyMode) {
+    target.searchParams.set(HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyParam, '1');
+  }
+
+  return target.toString();
 }
 
 interface HostedCheckoutUrlResponse {
