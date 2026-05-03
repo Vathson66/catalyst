@@ -23,12 +23,13 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - _vercel (vercel internals, eg: web vitals)
+     * - checkout-js (hosted checkout static assets)
      * - favicon.ico (favicon file)
      * - admin (admin panel)
      * - sitemap.xml (sitemap route)
      * - xmlsitemap.php (legacy sitemap route)
      * - robots.txt (robots route)
      */
-    '/((?!api|admin|_next/static|_next/image|_vercel|favicon.ico|xmlsitemap.php|sitemap.xml|robots.txt).*)',
+    '/((?!api|admin|checkout-js|_next/static|_next/image|_vercel|favicon.ico|xmlsitemap.php|sitemap.xml|robots.txt).*)',
   ],
 };
