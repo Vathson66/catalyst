@@ -18,7 +18,7 @@ Because files are under `core/public`, Next.js serves them as static assets from
 
 Enter the full URL to the auto-loader script file, for example:
 
-- `https://catalyst-core-arizondigital.vercel.app/checkout-js/auto-loader-1.782.3.js`
+- `https://catalyst-core-arizondigital.vercel.app/checkout-js/auto-loader-1.783.0.js`
 
 Do not enter:
 
@@ -37,8 +37,8 @@ npm run checkout:prepare-assets
 
 Then check:
 
-- `core/public/checkout-js/auto-loader-1.782.3.js`
-- `core/public/checkout-js/manifest-1.782.3.json`
+- `core/public/checkout-js/auto-loader-1.783.0.js`
+- `core/public/checkout-js/manifest-1.783.0.json`
 
 ## Notes
 

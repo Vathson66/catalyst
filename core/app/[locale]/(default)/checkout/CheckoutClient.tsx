@@ -27,10 +27,12 @@ type PaymentKey = string;
 
 const HOSTED_CHECKOUT_RETRY_DELAY_MS = 350;
 const HOSTED_CHECKOUT_MAX_ATTEMPTS = 2;
-const DEFAULT_HOSTED_PAYMENT_FLOW_ENABLED = false;
+const DEFAULT_HOSTED_PAYMENT_FLOW_ENABLED = true;
 const DEFAULT_HOSTED_PAYMENT_ONLY_MODE = true;
 const DEFAULT_HOSTED_RETURN_URL_PARAM = 'catalyst_return_url';
 const DEFAULT_HOSTED_PAYMENT_ONLY_PARAM = 'catalyst_payment_only';
+const DEFAULT_HOSTED_CHECKOUT_URL_PARAM = 'catalyst_checkout_url';
+const DEFAULT_HOSTED_CART_URL_PARAM = 'catalyst_cart_url';
 const DEFAULT_HOSTED_RETURN_SOURCE = 'hosted-checkout';
 
 interface SavedAddress {
@@ -151,6 +153,8 @@ interface HostedCheckoutFlowConfig {
   paymentOnlyMode: boolean;
   returnUrlParam: string;
   paymentOnlyParam: string;
+  checkoutUrlParam: string;
+  cartUrlParam: string;
   returnUrlOverride?: string;
 }
 
@@ -197,6 +201,14 @@ function resolveHostedCheckoutFlowConfig(): HostedCheckoutFlowConfig {
     paymentOnlyParam: sanitizeQueryParamName(
       process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_PAYMENT_ONLY_PARAM,
       DEFAULT_HOSTED_PAYMENT_ONLY_PARAM,
+    ),
+    checkoutUrlParam: sanitizeQueryParamName(
+      process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_CHECKOUT_URL_PARAM,
+      DEFAULT_HOSTED_CHECKOUT_URL_PARAM,
+    ),
+    cartUrlParam: sanitizeQueryParamName(
+      process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_CART_URL_PARAM,
+      DEFAULT_HOSTED_CART_URL_PARAM,
     ),
     returnUrlOverride: returnUrlOverride || undefined,
   };
@@ -2502,8 +2514,18 @@ function buildHostedCheckoutLaunchUrl(
 ): string {
   const target = new URL(checkoutUrl);
   const returnUrl = resolveHostedReturnUrl(options);
+  const catalystCheckoutUrl = new URL(`${options.localePrefix}/checkout`, window.location.origin);
+  const catalystCartUrl = new URL(`${options.localePrefix}/cart`, window.location.origin);
 
   target.searchParams.set(HOSTED_CHECKOUT_FLOW_CONFIG.returnUrlParam, returnUrl);
+  target.searchParams.set(
+    HOSTED_CHECKOUT_FLOW_CONFIG.checkoutUrlParam,
+    catalystCheckoutUrl.toString(),
+  );
+  target.searchParams.set(
+    HOSTED_CHECKOUT_FLOW_CONFIG.cartUrlParam,
+    catalystCartUrl.toString(),
+  );
 
   if (HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyMode) {
     target.searchParams.set(HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyParam, '1');
