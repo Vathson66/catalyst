@@ -25,6 +25,31 @@ import type { CheckoutSession } from '~/lib/checkout/types';
 type Step = 'guest' | 'shipping' | 'payment';
 type PaymentKey = string;
 
+interface CheckoutAddress {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  address1: string;
+  address2: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+}
+
+interface PersistedCheckoutDraft {
+  version: 1;
+  savedAt: number;
+  step: Step;
+  guestEmail: string;
+  smsConsent: boolean;
+  shippingAddr: CheckoutAddress;
+  sameAsShipping: boolean;
+  billingAddr: CheckoutAddress;
+  selectedShipping: string;
+}
+
 const HOSTED_CHECKOUT_RETRY_DELAY_MS = 350;
 const HOSTED_CHECKOUT_MAX_ATTEMPTS = 2;
 const DEFAULT_HOSTED_PAYMENT_FLOW_ENABLED = true;
@@ -34,6 +59,22 @@ const DEFAULT_HOSTED_PAYMENT_ONLY_PARAM = 'catalyst_payment_only';
 const DEFAULT_HOSTED_CHECKOUT_URL_PARAM = 'catalyst_checkout_url';
 const DEFAULT_HOSTED_CART_URL_PARAM = 'catalyst_cart_url';
 const DEFAULT_HOSTED_RETURN_SOURCE = 'hosted-checkout';
+const HOSTED_CHECKOUT_EDIT_SOURCE = 'hosted-checkout-edit';
+const CHECKOUT_DRAFT_STORAGE_KEY_PREFIX = 'co-checkout-draft-v1';
+const CHECKOUT_DRAFT_STORAGE_TTL_MS = 48 * 60 * 60 * 1000;
+
+const EMPTY_CHECKOUT_ADDRESS: CheckoutAddress = {
+  firstName: '',
+  lastName: '',
+  email: '',
+  phone: '',
+  address1: '',
+  address2: '',
+  city: '',
+  state: '',
+  postalCode: '',
+  country: 'US',
+};
 
 interface SavedAddress {
   id: number;
@@ -136,6 +177,141 @@ function normaliseSavedAddresses(addresses: unknown): SavedAddress[] {
   return addresses
     .map((address) => normaliseSavedAddress(address))
     .filter((address): address is SavedAddress => address !== null);
+}
+
+function isStepValue(value: unknown): value is Step {
+  return value === 'guest' || value === 'shipping' || value === 'payment';
+}
+
+function normaliseCheckoutAddress(value: unknown, fallbackEmail = ''): CheckoutAddress {
+  if (!value || typeof value !== 'object') {
+    return {
+      ...EMPTY_CHECKOUT_ADDRESS,
+      email: fallbackEmail,
+    };
+  }
+
+  const source = value as Record<string, unknown>;
+
+  return {
+    firstName: readStringValue(source.firstName, source.first_name),
+    lastName: readStringValue(source.lastName, source.last_name),
+    email: readStringValue(source.email, source.emailAddress, fallbackEmail),
+    phone: readStringValue(source.phone),
+    address1: readStringValue(source.address1, source.address_1, source.street_1),
+    address2: readStringValue(source.address2, source.address_2, source.street_2),
+    city: readStringValue(source.city),
+    state: readStringValue(
+      source.state,
+      source.stateCode,
+      source.state_code,
+      source.stateOrProvince,
+      source.state_or_province,
+      source.stateOrProvinceCode,
+      source.state_or_province_code,
+    ),
+    postalCode: readStringValue(source.postalCode, source.postal_code, source.zip),
+    country: readStringValue(
+      source.country,
+      source.countryCode,
+      source.country_code,
+      source.countryIso2,
+      source.country_iso2,
+    ) || 'US',
+  };
+}
+
+function hasRequiredShippingAddressFields(address: CheckoutAddress): boolean {
+  return Boolean(
+    address.firstName &&
+      address.address1 &&
+      address.city &&
+      address.state &&
+      address.postalCode,
+  );
+}
+
+function resolveCheckoutDraftStorageKey(checkoutId: string): string {
+  return `${CHECKOUT_DRAFT_STORAGE_KEY_PREFIX}:${window.location.host}:${checkoutId}`;
+}
+
+function readPersistedCheckoutDraft(checkoutId: string): PersistedCheckoutDraft | null {
+  try {
+    const key = resolveCheckoutDraftStorageKey(checkoutId);
+    const raw = window.localStorage.getItem(key);
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PersistedCheckoutDraft>;
+
+    if (
+      parsed.version !== 1 ||
+      typeof parsed.savedAt !== 'number' ||
+      !isStepValue(parsed.step)
+    ) {
+      window.localStorage.removeItem(key);
+
+      return null;
+    }
+
+    if (Date.now() - parsed.savedAt > CHECKOUT_DRAFT_STORAGE_TTL_MS) {
+      window.localStorage.removeItem(key);
+
+      return null;
+    }
+
+    const guestEmail = readStringValue(parsed.guestEmail);
+
+    return {
+      version: 1,
+      savedAt: parsed.savedAt,
+      step: parsed.step,
+      guestEmail,
+      smsConsent: Boolean(parsed.smsConsent),
+      shippingAddr: normaliseCheckoutAddress(parsed.shippingAddr, guestEmail),
+      sameAsShipping: parsed.sameAsShipping ?? true,
+      billingAddr: normaliseCheckoutAddress(parsed.billingAddr, guestEmail),
+      selectedShipping: readStringValue(parsed.selectedShipping),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedCheckoutDraft(checkoutId: string, draft: PersistedCheckoutDraft): void {
+  try {
+    const key = resolveCheckoutDraftStorageKey(checkoutId);
+
+    window.localStorage.setItem(key, JSON.stringify(draft));
+  } catch {
+    // Ignore storage failures and continue checkout without local draft support.
+  }
+}
+
+function clearPersistedCheckoutDraft(checkoutId: string): void {
+  try {
+    const key = resolveCheckoutDraftStorageKey(checkoutId);
+
+    window.localStorage.removeItem(key);
+  } catch {
+    // no-op
+  }
+}
+
+function mapHostedEditTargetToStep(editTarget: string | null): Step {
+  switch ((editTarget ?? '').toLowerCase()) {
+    case 'customer':
+      return 'guest';
+    case 'payment':
+      return 'payment';
+    case 'shipping':
+    case 'billing':
+    case 'checkout':
+    default:
+      return 'shipping';
+  }
 }
 
 interface LoanState {
@@ -243,28 +419,26 @@ export function CheckoutClient({ session, initialLoan }: Props) {
   const [smsConsent, setSmsConsent] = useState(false);
 
   // Shipping address
-  const [shippingAddr, setShippingAddr] = useState({
-    firstName: '',
-    lastName: '',
+  const [shippingAddr, setShippingAddr] = useState<CheckoutAddress>({
+    ...EMPTY_CHECKOUT_ADDRESS,
     email: guestEmail,
-    phone: '',
-    address1: '',
-    address2: '',
-    city: '',
-    state: '',
-    postalCode: '',
-    country: 'US',
   });
 
   // Billing address
   const [sameAsShipping, setSameAsShipping] = useState(true);
-  const [billingAddr, setBillingAddr] = useState({ ...shippingAddr });
+  const [billingAddr, setBillingAddr] = useState<CheckoutAddress>({
+    ...EMPTY_CHECKOUT_ADDRESS,
+    email: guestEmail,
+  });
 
   // Shipping options
   const [shippingConfirmed, setShippingConfirmed] = useState(false);
   const [shippingOptions, setShippingOptions] = useState<SdkShippingOption[]>([]);
   const [selectedShipping, setSelectedShipping] = useState('');
   const [loadingShippingOpts, setLoadingShippingOpts] = useState(false);
+  const [submittingShipping, setSubmittingShipping] = useState(false);
+  const shippingSubmitLockRef = useRef(false);
+  const [checkoutDraftHydrated, setCheckoutDraftHydrated] = useState(false);
 
   // UI state
   const [error, setError] = useState<string | null>(null);
@@ -277,6 +451,97 @@ export function CheckoutClient({ session, initialLoan }: Props) {
     sdkRef.current = adapter;
     void adapter.init();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const persistedDraft = readPersistedCheckoutDraft(session.checkoutId);
+    let hydratedStep: Step = 'guest';
+    let hydratedShippingAddr: CheckoutAddress = {
+      ...EMPTY_CHECKOUT_ADDRESS,
+      email: '',
+    };
+
+    if (persistedDraft) {
+      const shippingFromDraft: CheckoutAddress = {
+        ...persistedDraft.shippingAddr,
+        email: persistedDraft.shippingAddr.email || persistedDraft.guestEmail,
+      };
+      const billingFromDraft: CheckoutAddress = persistedDraft.sameAsShipping
+        ? { ...shippingFromDraft }
+        : {
+            ...persistedDraft.billingAddr,
+            email:
+              persistedDraft.billingAddr.email ||
+              shippingFromDraft.email ||
+              persistedDraft.guestEmail,
+          };
+
+      setGuestEmail(persistedDraft.guestEmail);
+      setSmsConsent(persistedDraft.smsConsent);
+      setShippingAddr(shippingFromDraft);
+      setSameAsShipping(persistedDraft.sameAsShipping);
+      setBillingAddr(billingFromDraft);
+      setSelectedShipping(persistedDraft.selectedShipping);
+
+      hydratedStep = persistedDraft.step;
+      hydratedShippingAddr = shippingFromDraft;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const source = params.get('source')?.trim().toLowerCase();
+
+    if (source === HOSTED_CHECKOUT_EDIT_SOURCE) {
+      const requestedStep = mapHostedEditTargetToStep(params.get('edit'));
+
+      hydratedStep =
+        requestedStep === 'payment' && !hasRequiredShippingAddressFields(hydratedShippingAddr)
+          ? 'shipping'
+          : requestedStep;
+    } else if (hydratedStep === 'payment' && !hasRequiredShippingAddressFields(hydratedShippingAddr)) {
+      hydratedStep = 'shipping';
+    }
+
+    setStep(hydratedStep);
+    setCheckoutDraftHydrated(true);
+  }, [session.checkoutId]);
+
+  useEffect(() => {
+    if (!checkoutDraftHydrated) {
+      return;
+    }
+
+    const shippingWithEmail: CheckoutAddress = {
+      ...shippingAddr,
+      email: shippingAddr.email || guestEmail,
+    };
+    const billingWithEmail: CheckoutAddress = sameAsShipping
+      ? { ...shippingWithEmail }
+      : {
+          ...billingAddr,
+          email: billingAddr.email || shippingWithEmail.email || guestEmail,
+        };
+
+    writePersistedCheckoutDraft(session.checkoutId, {
+      version: 1,
+      savedAt: Date.now(),
+      step,
+      guestEmail,
+      smsConsent,
+      shippingAddr: shippingWithEmail,
+      sameAsShipping,
+      billingAddr: billingWithEmail,
+      selectedShipping,
+    });
+  }, [
+    billingAddr,
+    checkoutDraftHydrated,
+    guestEmail,
+    sameAsShipping,
+    selectedShipping,
+    session.checkoutId,
+    shippingAddr,
+    smsConsent,
+    step,
+  ]);
 
   const fmt = (n: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: session.currencyCode }).format(n);
@@ -554,6 +819,143 @@ export function CheckoutClient({ session, initialLoan }: Props) {
     // Only re-run when we enter the shipping step
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
+
+  const handleShippingSubmit = useCallback(
+    async (e: React.FormEvent<HTMLFormElement>) => {
+      e.preventDefault();
+
+      if (shippingSubmitLockRef.current) {
+        return;
+      }
+
+      if (!hasRequiredShippingAddressFields(shippingAddr)) {
+        setError('Please fill in all required shipping fields');
+
+        return;
+      }
+
+      if (!sameAsShipping && (!billingAddr.firstName || !billingAddr.address1)) {
+        setError('Please fill in all required billing fields');
+
+        return;
+      }
+
+      if (shippingConfirmed && shippingOptions.length > 0 && !selectedShipping) {
+        setError('Please select a shipping method');
+
+        return;
+      }
+
+      shippingSubmitLockRef.current = true;
+      setError(null);
+      setSubmittingShipping(true);
+      setLoadingShippingOpts(true);
+
+      try {
+        const sdk = sdkRef.current;
+
+        if (!sdk) {
+          throw new Error('Checkout service is still initializing. Please try again.');
+        }
+
+        let nextShippingOptions = shippingOptions;
+        let shippingOptionId = selectedShipping;
+
+        if (!shippingConfirmed || shippingOptions.length === 0) {
+          await sdk.updateShippingAddress({
+            firstName: shippingAddr.firstName,
+            lastName: shippingAddr.lastName,
+            address1: shippingAddr.address1,
+            address2: shippingAddr.address2 || undefined,
+            city: shippingAddr.city,
+            stateOrProvinceCode: shippingAddr.state,
+            postalCode: shippingAddr.postalCode,
+            countryCode: shippingAddr.country,
+            phone: shippingAddr.phone || undefined,
+          });
+
+          nextShippingOptions = await sdk.loadShippingOptions();
+          setShippingOptions(nextShippingOptions);
+          setShippingConfirmed(true);
+
+          if (nextShippingOptions.length > 0) {
+            const chosenOption =
+              nextShippingOptions.find((option) => option.id === shippingOptionId) ??
+              nextShippingOptions.find((option) => option.isRecommended) ??
+              nextShippingOptions[0];
+
+            shippingOptionId = chosenOption?.id ?? '';
+
+            if (shippingOptionId) {
+              setSelectedShipping(shippingOptionId);
+            }
+          } else {
+            shippingOptionId = '';
+            setSelectedShipping('');
+          }
+        }
+
+        if (nextShippingOptions.length > 0 && !shippingOptionId) {
+          throw new Error('Please select a shipping method');
+        }
+
+        if (shippingOptionId) {
+          await sdk.selectShippingOption(shippingOptionId);
+        }
+
+        const billing = sameAsShipping ? shippingAddr : billingAddr;
+        await sdk.updateBillingAddress({
+          firstName: billing.firstName,
+          lastName: billing.lastName,
+          address1: billing.address1,
+          address2: billing.address2 || undefined,
+          city: billing.city,
+          stateOrProvinceCode: billing.state,
+          postalCode: billing.postalCode,
+          countryCode: billing.country,
+          phone: billing.phone || undefined,
+          email: shippingAddr.email || guestEmail,
+        });
+
+        if (HOSTED_CHECKOUT_FLOW_CONFIG.enabled) {
+          const checkoutUrl = await resolveHostedCheckoutUrl(session.checkoutId);
+          const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, {
+            localePrefix,
+            email: shippingAddr.email || guestEmail,
+            currency: session.currencyCode,
+          });
+
+          window.location.assign(hostedCheckoutUrl);
+
+          return;
+        }
+
+        setStep('payment');
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Could not process shipping details. Please try again.',
+        );
+      } finally {
+        setLoadingShippingOpts(false);
+        setSubmittingShipping(false);
+        shippingSubmitLockRef.current = false;
+      }
+    },
+    [
+      billingAddr,
+      guestEmail,
+      localePrefix,
+      sameAsShipping,
+      selectedShipping,
+      session.checkoutId,
+      session.currencyCode,
+      shippingAddr,
+      shippingConfirmed,
+      shippingOptions,
+    ],
+  );
 
   // ── STEP: Guest ──────────────────────────────────────────────────
 
@@ -892,88 +1294,7 @@ export function CheckoutClient({ session, initialLoan }: Props) {
         <form
           className="checkout-grid"
           onSubmit={(e) => {
-            e.preventDefault();
-            void (async () => {
-              if (!shippingAddr.firstName || !shippingAddr.address1 || !shippingAddr.city || !shippingAddr.postalCode) {
-                setError('Please fill in all required shipping fields');
-                return;
-              }
-              if (!sameAsShipping && (!billingAddr.firstName || !billingAddr.address1)) {
-                setError('Please fill in all required billing fields');
-                return;
-              }
-              if (shippingOptions.length > 0 && !selectedShipping) {
-                setError('Please select a shipping method');
-                return;
-              }
-
-              setError(null);
-              setLoadingShippingOpts(true);
-
-              try {
-                const sdk = sdkRef.current!;
-
-                if (!shippingConfirmed) {
-                  await sdk.updateShippingAddress({
-                    firstName: shippingAddr.firstName,
-                    lastName: shippingAddr.lastName,
-                    address1: shippingAddr.address1,
-                    address2: shippingAddr.address2 || undefined,
-                    city: shippingAddr.city,
-                    stateOrProvinceCode: shippingAddr.state,
-                    postalCode: shippingAddr.postalCode,
-                    countryCode: shippingAddr.country,
-                    phone: shippingAddr.phone || undefined,
-                  });
-                  const options = await sdk.loadShippingOptions();
-                  setShippingOptions(options);
-                  setShippingConfirmed(true);
-                  if (options.length > 0) {
-                    const best = options.find((o) => o.isRecommended) ?? options[0];
-                    if (best) setSelectedShipping(best.id);
-                    setLoadingShippingOpts(false);
-                    return;
-                  }
-                }
-
-                if (selectedShipping) {
-                  await sdk.selectShippingOption(selectedShipping);
-                }
-
-                const billing = sameAsShipping ? shippingAddr : billingAddr;
-                await sdk.updateBillingAddress({
-                  firstName: billing.firstName,
-                  lastName: billing.lastName,
-                  address1: billing.address1,
-                  address2: billing.address2 || undefined,
-                  city: billing.city,
-                  stateOrProvinceCode: billing.state,
-                  postalCode: billing.postalCode,
-                  countryCode: billing.country,
-                  phone: billing.phone || undefined,
-                  email: shippingAddr.email || guestEmail,
-                });
-
-                if (HOSTED_CHECKOUT_FLOW_CONFIG.enabled) {
-                  const checkoutUrl = await resolveHostedCheckoutUrl(session.checkoutId);
-                  const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, {
-                    localePrefix,
-                    email: shippingAddr.email || guestEmail,
-                    currency: session.currencyCode,
-                  });
-
-                  window.location.assign(hostedCheckoutUrl);
-                  return;
-                }
-
-                // Default Track A behavior: continue to in-page payment step.
-                setStep('payment');
-              } catch (err) {
-                setError(err instanceof Error ? err.message : 'Could not process shipping details. Please try again.');
-              } finally {
-                setLoadingShippingOpts(false);
-              }
-            })();
+            void handleShippingSubmit(e);
           }}
         >
           <section className="checkout-main">
@@ -1195,11 +1516,19 @@ export function CheckoutClient({ session, initialLoan }: Props) {
               </p>
             )}
 
-            {!loadingShippingOpts && shippingConfirmed && (shippingOptions.length === 0 || selectedShipping) && (
-              <button type="submit" className="cta-btn">
-                Continue to payment →
-              </button>
-            )}
+            <button
+              type="submit"
+              className={`cta-btn${submittingShipping ? ' cta-btn-loading' : ''}`}
+              disabled={submittingShipping || loadingShippingOpts}
+            >
+              {submittingShipping || loadingShippingOpts ? (
+                <><Spinner /> {shippingConfirmed ? 'Confirming details…' : 'Preparing checkout…'}</>
+              ) : HOSTED_CHECKOUT_FLOW_CONFIG.enabled ? (
+                'Continue to secure payment →'
+              ) : (
+                'Continue to payment →'
+              )}
+            </button>
           </section>
 
           <aside className="order-summary-rail">
@@ -1552,6 +1881,7 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
   const sdkPaymentMethodsRef = useRef<CheckoutSdkPaymentMethod[]>([]);
   const activePaymentMethodRef = useRef<ActivePaymentMethodRef | null>(null);
   const activePaymentMethodKeyRef = useRef<string | null>(null);
+  const submitLockRef = useRef(false);
 
   const [useLoan, setUseLoan] = useState(false);
   const [loanAmount, setLoanAmount] = useState(
@@ -1883,6 +2213,12 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
+
+      if (submitLockRef.current) {
+        return;
+      }
+
+      submitLockRef.current = true;
       setError(null);
       setSubmitting(true);
 
@@ -1931,6 +2267,7 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
             email,
             currency: session.currencyCode,
           });
+          clearPersistedCheckoutDraft(session.checkoutId);
           router.push(`${localePrefix}/checkout/order-confirmation?${params.toString()}`);
           return;
         }
@@ -1982,6 +2319,7 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
             email,
             currency: session.currencyCode,
           });
+          clearPersistedCheckoutDraft(session.checkoutId);
           router.push(`${localePrefix}/checkout/order-confirmation?${params.toString()}`);
           return;
         } catch (sdkErr) {
@@ -2006,6 +2344,7 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
           err instanceof Error ? err.message : 'Something went wrong. Please try again.',
         );
       } finally {
+        submitLockRef.current = false;
         setSubmitting(false);
       }
     },
