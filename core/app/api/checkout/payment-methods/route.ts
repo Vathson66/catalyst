@@ -10,37 +10,6 @@ export interface PaymentMethodShape {
   kind: 'manual' | 'card' | 'wallet' | 'online';
 }
 
-const OFFLINE_METHOD_DEFINITIONS: Record<string, PaymentMethodShape> = {
-  bank_deposit: {
-    id: 'bank_deposit',
-    method: 'bank-deposit',
-    name: 'Bank Deposit',
-    kind: 'manual',
-  },
-  cash_on_delivery: {
-    id: 'cash_on_delivery',
-    method: 'cash-on-delivery',
-    name: 'Cash on Delivery',
-    kind: 'manual',
-  },
-  check_money_order: {
-    id: 'check_money_order',
-    method: 'check',
-    name: 'Check / Money Order',
-    kind: 'manual',
-  },
-};
-
-function getConfiguredOfflineMethods(): PaymentMethodShape[] {
-  const raw = process.env.CHECKOUT_OFFLINE_METHODS ?? '';
-  return raw
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean)
-    .map((key) => OFFLINE_METHOD_DEFINITIONS[key])
-    .filter((m): m is PaymentMethodShape => m !== undefined);
-}
-
 interface BcMgmtPaymentMethod {
   id: string;
   name: string;
@@ -51,12 +20,57 @@ interface BcMgmtResponse {
   data?: BcMgmtPaymentMethod[];
 }
 
+function normalizeToken(value?: string): string {
+  return (value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function detectOfflineMethodType(id: string): PaymentMethodShape['method'] {
+  const token = normalizeToken(id);
+
+  if (token.includes('bank') || token.includes('deposit')) {
+    return 'bank-deposit';
+  }
+
+  if (token.includes('cash') || token.includes('cod')) {
+    return 'cash-on-delivery';
+  }
+
+  if (token.includes('check') || token.includes('moneyorder')) {
+    return 'check';
+  }
+
+  return 'manual-payment';
+}
+
+function isOfflineMethod(m: BcMgmtPaymentMethod): boolean {
+  const id = normalizeToken(m.id);
+  const gateway = normalizeToken(m.gateway);
+
+  if (gateway.includes('offline') || gateway.includes('manual')) {
+    return true;
+  }
+
+  return (
+    id.includes('bank') ||
+    id.includes('deposit') ||
+    id.includes('cash') ||
+    id.includes('cod') ||
+    id.includes('check') ||
+    id.includes('moneyorder')
+  );
+}
+
 function normalise(m: BcMgmtPaymentMethod): PaymentMethodShape {
   const lower = m.id.toLowerCase();
 
-  if (lower in OFFLINE_METHOD_DEFINITIONS) {
-    const offline = OFFLINE_METHOD_DEFINITIONS[lower]!;
-    return { ...offline, id: m.id, name: m.name || offline.name, gateway: m.gateway };
+  if (isOfflineMethod(m)) {
+    return {
+      id: m.id,
+      gateway: m.gateway,
+      method: detectOfflineMethodType(m.id),
+      name: m.name,
+      kind: 'manual',
+    };
   }
 
   // Wallets should stay as distinct wallet methods.
@@ -122,11 +136,10 @@ function pruneGatewayVariants(methods: PaymentMethodShape[]): PaymentMethodShape
 
 export async function GET(req: NextRequest) {
   const checkoutId = req.nextUrl.searchParams.get('checkoutId');
-  const offlineMethods = getConfiguredOfflineMethods();
 
   if (!checkoutId) {
     return NextResponse.json(
-      { error: 'checkoutId is required', methods: offlineMethods, source: 'fallback' },
+      { error: 'checkoutId is required', methods: [], source: 'fallback' },
       { status: 400 },
     );
   }
@@ -142,14 +155,10 @@ export async function GET(req: NextRequest) {
 
     if (mgmtRes.ok) {
       const mgmtData = (await mgmtRes.json()) as BcMgmtResponse;
-      const onlineMethods = pruneGatewayVariants((mgmtData.data ?? []).map(normalise));
-
-      // Deduplicate on id and append configured offline fallbacks only when BC does not return them.
-      const existingIds = new Set(onlineMethods.map((m) => m.id));
-      const filteredOffline = offlineMethods.filter((m) => !existingIds.has(m.id));
+      const methods = pruneGatewayVariants((mgmtData.data ?? []).map(normalise));
 
       return NextResponse.json({
-        methods: [...onlineMethods, ...filteredOffline],
+        methods,
         source: 'bc-management',
       });
     }
@@ -159,7 +168,7 @@ export async function GET(req: NextRequest) {
       {
         error: `Unable to load payment methods from BigCommerce [${mgmtRes.status}]`,
         detail: errorBody,
-        methods: offlineMethods,
+        methods: [],
         source: 'fallback',
       },
       { status: 502 },
@@ -168,7 +177,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         error: 'Unable to load payment methods from BigCommerce',
-        methods: offlineMethods,
+        methods: [],
         source: 'fallback',
       },
       { status: 502 },
