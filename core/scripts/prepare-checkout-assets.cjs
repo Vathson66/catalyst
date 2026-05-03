@@ -7,6 +7,7 @@ const CHECKOUT_JS_DIR = path.join(REPO_ROOT, 'checkout-js');
 const CHECKOUT_JS_DIST_DIR = path.join(CHECKOUT_JS_DIR, 'dist');
 const CORE_PUBLIC_DIR = path.join(REPO_ROOT, 'core', 'public');
 const TARGET_DIR = path.join(CORE_PUBLIC_DIR, 'checkout-js');
+const STABLE_AUTO_LOADER_FILE = 'auto-loader.js';
 
 function runCommand(command, args, cwd) {
   const result = spawnSync(command, args, {
@@ -29,6 +30,27 @@ function getAutoLoaderFiles(directory) {
     .readdirSync(directory)
     .filter((name) => /^auto-loader(?:-[0-9.]+)?\.js$/.test(name))
     .sort();
+}
+
+function ensureStableAutoLoader(directory, autoLoaderFiles) {
+  if (autoLoaderFiles.includes(STABLE_AUTO_LOADER_FILE)) {
+    return STABLE_AUTO_LOADER_FILE;
+  }
+
+  const versionedAutoLoader = autoLoaderFiles.find((name) => /^auto-loader-[0-9.]+\.js$/.test(name));
+
+  if (!versionedAutoLoader) {
+    throw new Error(
+      `No auto-loader source file found in ${directory} to create ${STABLE_AUTO_LOADER_FILE}`,
+    );
+  }
+
+  fs.copyFileSync(
+    path.join(directory, versionedAutoLoader),
+    path.join(directory, STABLE_AUTO_LOADER_FILE),
+  );
+
+  return STABLE_AUTO_LOADER_FILE;
 }
 
 function ensureCheckoutJsBuild() {
@@ -72,8 +94,7 @@ function syncCheckoutAssets() {
     throw new Error(`No auto-loader files found in ${TARGET_DIR}`);
   }
 
-  const preferredFile =
-    autoLoaderFiles.find((name) => /^auto-loader-[0-9.]+\.js$/.test(name)) ?? autoLoaderFiles[0];
+  const preferredFile = ensureStableAutoLoader(TARGET_DIR, autoLoaderFiles);
 
   console.log(`[checkout-assets] Synced checkout-js assets to ${TARGET_DIR}`);
   console.log(

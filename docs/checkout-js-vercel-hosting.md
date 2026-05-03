@@ -18,7 +18,7 @@ Because files are under `core/public`, Next.js serves them as static assets from
 
 Enter the full URL to the auto-loader script file, for example:
 
-- `https://catalyst-core-arizondigital.vercel.app/checkout-js/auto-loader-1.783.0.js`
+- `https://catalyst-core-arizondigital.vercel.app/checkout-js/auto-loader.js`
 
 Do not enter:
 
@@ -37,11 +37,12 @@ npm run checkout:prepare-assets
 
 Then check:
 
-- `core/public/checkout-js/auto-loader-1.783.0.js`
-- `core/public/checkout-js/manifest-1.783.0.json`
+- `core/public/checkout-js/auto-loader.js`
+- `core/public/checkout-js/manifest.json`
 
 ## Notes
 
 - Full `dist` copy is required because the autoloader fetches manifests and chunks dynamically.
+- Keep BigCommerce Custom Checkout configured to `/checkout-js/auto-loader.js` so file names never need to be changed after upgrades.
 - `core/public/checkout-js` is generated at build time and should not be edited manually.
 - Set `SKIP_CHECKOUT_JS_ASSETS=true` to skip this step when needed.
