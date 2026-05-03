@@ -186,10 +186,7 @@ function resolveHostedCheckoutFlowConfig(): HostedCheckoutFlowConfig {
   const returnUrlOverride = process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_RETURN_URL?.trim();
 
   return {
-    enabled: parseBooleanValue(
-      process.env.NEXT_PUBLIC_CHECKOUT_FORCE_HOSTED_PAYMENT_FLOW,
-      DEFAULT_HOSTED_PAYMENT_FLOW_ENABLED,
-    ),
+    enabled: true,
     paymentOnlyMode: parseBooleanValue(
       process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_PAYMENT_ONLY_MODE,
       DEFAULT_HOSTED_PAYMENT_ONLY_MODE,
