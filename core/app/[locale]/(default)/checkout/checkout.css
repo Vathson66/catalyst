@@ -204,6 +204,269 @@
 .checkout-shell .contact-info { margin: 0; display: flex; align-items: center; gap: 10px; }
 .checkout-shell .contact-email { font-weight: 500; }
 
+/* ── Flow overview ─────────────────────────────────────────────────────── */
+
+.checkout-shell .checkout-flow-overview {
+  margin: 0 0 18px;
+  border-color: #d8dde7;
+  background: linear-gradient(180deg, #ffffff 0%, #f9fafc 100%);
+}
+
+.checkout-shell .checkout-progress-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.checkout-shell .checkout-progress-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  min-width: max-content;
+}
+
+.checkout-shell .checkout-progress-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1.5px solid #ced4df;
+  background: #fff;
+  color: var(--muted);
+}
+
+.checkout-shell .checkout-progress-step-complete .checkout-progress-label,
+.checkout-shell .checkout-progress-step-current .checkout-progress-label {
+  color: var(--ink);
+}
+
+.checkout-shell .checkout-progress-step-upcoming .checkout-progress-label {
+  color: var(--muted);
+}
+
+.checkout-shell .checkout-progress-badge-complete {
+  border-color: #22a061;
+  background: #22a061;
+  color: #fff;
+}
+
+.checkout-shell .checkout-progress-badge-current {
+  border-color: var(--brand);
+  background: #fff;
+  color: var(--brand);
+}
+
+.checkout-shell .checkout-progress-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.checkout-shell .checkout-progress-connector {
+  flex: 1;
+  min-width: 24px;
+  height: 2px;
+  border-radius: 999px;
+  background: #d6dbe5;
+}
+
+.checkout-shell .checkout-progress-connector-complete {
+  background: #22a061;
+}
+
+.checkout-shell .checkout-snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.checkout-shell .checkout-snapshot-row {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.checkout-shell .checkout-snapshot-row-complete {
+  border-color: #cde8d9;
+  background: #f3fbf6;
+}
+
+.checkout-shell .checkout-snapshot-row-current {
+  border-color: #c9d0dd;
+  background: #f8fafc;
+}
+
+.checkout-shell .checkout-snapshot-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.checkout-shell .checkout-snapshot-label {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.35px;
+  color: var(--muted);
+}
+
+.checkout-shell .checkout-snapshot-state {
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+.checkout-shell .checkout-snapshot-state-complete {
+  background: #daf2e2;
+  color: #16653d;
+}
+
+.checkout-shell .checkout-snapshot-state-current {
+  background: #e8ecf3;
+  color: #374151;
+}
+
+.checkout-shell .checkout-snapshot-state-pending {
+  background: #f0f2f6;
+  color: #6b7280;
+}
+
+.checkout-shell .checkout-snapshot-value {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink);
+  line-height: 1.45;
+}
+
+.checkout-shell .checkout-snapshot-edit {
+  align-self: flex-start;
+  border: none;
+  background: none;
+  color: var(--brand);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.checkout-shell .checkout-flow-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.checkout-shell .checkout-flow-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--brand);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.checkout-shell .checkout-flow-link:hover {
+  opacity: 0.8;
+}
+
+/* ── Shipping history panel ────────────────────────────────────────────── */
+
+.checkout-shell .checkout-history-card {
+  border-color: #d8dde7;
+  background: linear-gradient(180deg, #ffffff 0%, #f9fafc 100%);
+}
+
+.checkout-shell .checkout-history-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.checkout-shell .checkout-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.checkout-shell .checkout-history-heading {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.45px;
+  color: var(--muted);
+}
+
+.checkout-shell .checkout-history-value {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.4;
+}
+
+.checkout-shell .checkout-history-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.checkout-shell .checkout-history-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #f4f6fa;
+  color: var(--muted);
+}
+
+.checkout-shell .checkout-history-pill-auth {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.checkout-shell .checkout-history-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 2px;
+}
+
+.checkout-shell .checkout-history-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--brand);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.checkout-shell .checkout-history-link:hover {
+  opacity: 0.8;
+}
+
 /* ── Form fields ────────────────────────────────────────────────────────── */
 
 .checkout-shell .form-row { display: flex; flex-direction: column; gap: 10px; }
@@ -667,6 +930,16 @@
 }
 .checkout-shell .billing-same-label { font-size: 14px; font-weight: 500; color: var(--ink); }
 
+.checkout-shell .billing-preference-card {
+  gap: 10px;
+}
+
+.checkout-shell .billing-same-summary {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 /* ── Financing card ─────────────────────────────────────────────────────── */
 
 .checkout-shell .financing-card {
@@ -819,15 +1092,26 @@
   .checkout-shell .checkout-grid {
     grid-template-columns: 1fr;
   }
+  .checkout-shell .checkout-snapshot-grid {
+    grid-template-columns: 1fr;
+  }
   .checkout-shell .order-summary-rail {
     position: static;
   }
   .checkout-shell .express-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .checkout-shell .checkout-history-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 520px) {
+  .checkout-shell .checkout-flow-actions {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
   .checkout-shell .express-row {
     grid-template-columns: 1fr;
   }

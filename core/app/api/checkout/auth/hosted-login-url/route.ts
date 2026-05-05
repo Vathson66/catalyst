@@ -10,6 +10,18 @@ interface BcCustomer {
 
 interface HostedLoginUrlRequest {
   checkoutUrl?: string;
+  checkoutId?: string;
+}
+
+interface RedirectUrlsResponse {
+  data?: {
+    checkout_url?: string;
+    embedded_checkout_url?: string;
+  };
+}
+
+function normalizeHostname(hostname: string): string {
+  return hostname.trim().toLowerCase().replace(/\.$/, '');
 }
 
 function requireEnv(name: string): string {
@@ -49,19 +61,48 @@ function bcHeaders(): Record<string, string> {
   };
 }
 
+function bcJsonHeaders(): Record<string, string> {
+  return {
+    ...bcHeaders(),
+    'Content-Type': 'application/json',
+  };
+}
+
+function isValidCheckoutId(checkoutId: string): boolean {
+  return /^[A-Za-z0-9_-]+$/.test(checkoutId);
+}
+
+function resolveCheckoutIdFromUrl(checkoutUrl: URL): string | undefined {
+  const candidates = ['checkoutId', 'checkout_id', 'cartId', 'cart_id', 'id'];
+
+  for (const key of candidates) {
+    const value = checkoutUrl.searchParams.get(key)?.trim();
+
+    if (value && isValidCheckoutId(value)) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function isBigCommerceManagedCheckoutHost(hostname: string): boolean {
+  return hostname === 'checkout.bigcommerce.com' || hostname.endsWith('.mybigcommerce.com');
+}
+
 function buildTrustedCheckoutHosts(): Set<string> {
   const hosts = new Set<string>();
   const storefrontUrl = process.env.BC_STOREFRONT_URL?.trim();
 
   if (storefrontUrl) {
     try {
-      hosts.add(new URL(storefrontUrl).host.toLowerCase());
+      hosts.add(normalizeHostname(new URL(storefrontUrl).hostname));
     } catch {
       // Ignore malformed storefront URL env and rely on default host.
     }
   }
 
-  hosts.add(`store-${resolveStoreHash()}.mybigcommerce.com`);
+  hosts.add(normalizeHostname(`store-${resolveStoreHash()}.mybigcommerce.com`));
 
   return hosts;
 }
@@ -74,13 +115,75 @@ function parseCheckoutUrl(rawUrl: string): URL {
     throw new Error('checkoutUrl must be an absolute http(s) URL');
   }
 
-  const trustedHosts = buildTrustedCheckoutHosts();
+  return checkoutUrl;
+}
 
-  if (!trustedHosts.has(checkoutUrl.host.toLowerCase())) {
-    throw new Error('checkoutUrl host is not trusted for hosted login');
+async function resolveCheckoutHostsFromBigCommerce(checkoutId: string): Promise<Set<string>> {
+  const hosts = new Set<string>();
+  const res = await fetch(`${bcBase()}/v3/carts/${encodeURIComponent(checkoutId)}/redirect_urls`, {
+    method: 'POST',
+    headers: bcJsonHeaders(),
+    body: JSON.stringify({}),
+    cache: 'no-store',
+  });
+
+  const bodyText = await res.text();
+
+  if (!res.ok) {
+    throw new Error(`Could not verify checkout host [${res.status}]`);
   }
 
-  return checkoutUrl;
+  let payload: RedirectUrlsResponse = {};
+
+  if (bodyText) {
+    try {
+      payload = JSON.parse(bodyText) as RedirectUrlsResponse;
+    } catch {
+      payload = {};
+    }
+  }
+
+  const checkoutUrls = [payload.data?.checkout_url, payload.data?.embedded_checkout_url].filter(
+    (value): value is string => typeof value === 'string' && value.trim() !== '',
+  );
+
+  for (const checkoutUrl of checkoutUrls) {
+    try {
+      hosts.add(normalizeHostname(new URL(checkoutUrl).hostname));
+    } catch {
+      // Ignore malformed URL entries and continue with remaining candidates.
+    }
+  }
+
+  return hosts;
+}
+
+async function assertTrustedCheckoutHost(checkoutUrl: URL, checkoutId?: string): Promise<void> {
+  const checkoutHost = normalizeHostname(checkoutUrl.hostname);
+  const trustedHosts = buildTrustedCheckoutHosts();
+
+  if (trustedHosts.has(checkoutHost)) {
+    return;
+  }
+
+  if (checkoutId && isValidCheckoutId(checkoutId)) {
+    const verifiedHosts = await resolveCheckoutHostsFromBigCommerce(checkoutId);
+
+    if (verifiedHosts.has(checkoutHost)) {
+      return;
+    }
+
+    // Some BigCommerce-managed checkout hosts vary by edge routing while still being valid
+    // for the same checkout/cart. Allow these only after successful checkoutId verification.
+    if (
+      isBigCommerceManagedCheckoutHost(checkoutHost) &&
+      Array.from(verifiedHosts).some((host) => isBigCommerceManagedCheckoutHost(host))
+    ) {
+      return;
+    }
+  }
+
+  throw new Error('checkoutUrl host is not trusted for hosted login');
 }
 
 async function lookupCustomerByEmail(email: string): Promise<BcCustomer | null> {
@@ -124,12 +227,19 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as HostedLoginUrlRequest;
     const checkoutUrlRaw = body.checkoutUrl?.trim();
+    const checkoutIdRaw = body.checkoutId?.trim();
 
     if (!checkoutUrlRaw) {
       return NextResponse.json({ error: 'checkoutUrl is required' }, { status: 400 });
     }
 
+    if (checkoutIdRaw && !isValidCheckoutId(checkoutIdRaw)) {
+      return NextResponse.json({ error: 'checkoutId format is invalid' }, { status: 400 });
+    }
+
     const checkoutUrl = parseCheckoutUrl(checkoutUrlRaw);
+  const checkoutId = checkoutIdRaw || resolveCheckoutIdFromUrl(checkoutUrl);
+    await assertTrustedCheckoutHost(checkoutUrl, checkoutId);
     const session = await auth();
     const sessionEmail = session?.user?.email?.trim().toLowerCase();
 

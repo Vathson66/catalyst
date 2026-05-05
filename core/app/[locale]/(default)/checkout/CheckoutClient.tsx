@@ -241,6 +241,44 @@ function hasRequiredShippingAddressFields(address: CheckoutAddress): boolean {
   );
 }
 
+function hasRequiredBillingAddressFields(address: CheckoutAddress): boolean {
+  return Boolean(
+    address.firstName &&
+      address.address1 &&
+      address.city &&
+      address.state &&
+      address.postalCode,
+  );
+}
+
+function formatDisplayName(firstName: string, lastName: string): string {
+  return [firstName.trim(), lastName.trim()].filter(Boolean).join(' ');
+}
+
+function formatAddressSummary(address: CheckoutAddress): string {
+  const cityState = [address.city.trim(), address.state.trim()].filter(Boolean).join(', ');
+
+  return [
+    address.address1.trim(),
+    address.address2.trim(),
+    cityState,
+    address.postalCode.trim(),
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+function formatContactSummary(name: string, email: string): string {
+  const trimmedName = name.trim();
+  const trimmedEmail = email.trim();
+
+  if (trimmedName && trimmedEmail) {
+    return `${trimmedName} · ${trimmedEmail}`;
+  }
+
+  return trimmedName || trimmedEmail;
+}
+
 function resolveCheckoutDraftStorageKey(checkoutId: string): string {
   return `${CHECKOUT_DRAFT_STORAGE_KEY_PREFIX}:${window.location.host}:${checkoutId}`;
 }
@@ -980,7 +1018,7 @@ export function CheckoutClient({ session, initialLoan }: Props) {
         return;
       }
 
-      if (!sameAsShipping && (!billingAddr.firstName || !billingAddr.address1)) {
+      if (!sameAsShipping && !hasRequiredBillingAddressFields(billingAddr)) {
         setError('Please fill in all required billing fields');
 
         return;
@@ -1081,7 +1119,7 @@ export function CheckoutClient({ session, initialLoan }: Props) {
             email: shippingAddr.email || guestEmail,
             currency: session.currencyCode,
           });
-          const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl);
+          const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
 
           window.location.assign(hostedLaunchUrl);
 
@@ -1119,6 +1157,37 @@ export function CheckoutClient({ session, initialLoan }: Props) {
     ],
   );
 
+  const contactDisplayName = signedInCustomer
+    ? formatDisplayName(signedInCustomer.firstName, signedInCustomer.lastName)
+    : formatDisplayName(shippingAddr.firstName, shippingAddr.lastName);
+  const contactEmail = shippingAddr.email || guestEmail || signedInCustomer?.email || '';
+  const contactSummary =
+    formatContactSummary(contactDisplayName, contactEmail) || 'Enter your email to begin checkout';
+
+  const shippingAddressSummary = formatAddressSummary(shippingAddr);
+  const selectedShippingOption = shippingOptions.find((option) => option.id === selectedShipping);
+  const shippingMethodSummary = selectedShippingOption
+    ? selectedShippingOption.description
+    : shippingConfirmed
+      ? 'Select a shipping method'
+      : 'Shipping method appears after address confirmation';
+  const deliverySummary = shippingAddressSummary
+    ? `${shippingAddressSummary} · ${shippingMethodSummary}`
+    : 'Add your delivery address';
+  const billingSummary = sameAsShipping
+    ? shippingAddressSummary
+      ? `Same as delivery · ${shippingAddressSummary}`
+      : 'Billing will match delivery address'
+    : formatAddressSummary(billingAddr) || 'Add your billing address';
+
+  const contactComplete = Boolean(contactEmail);
+  const deliveryComplete =
+    Boolean(shippingAddressSummary) &&
+    (shippingConfirmed ? shippingOptions.length === 0 || Boolean(selectedShipping) : false);
+  const billingComplete = sameAsShipping
+    ? Boolean(shippingAddressSummary)
+    : hasRequiredBillingAddressFields(billingAddr);
+
   // ── STEP: Guest ──────────────────────────────────────────────────
 
   if (step === 'guest') {
@@ -1127,6 +1196,19 @@ export function CheckoutClient({ session, initialLoan }: Props) {
         <div className="page-header">
           <h1 className="page-title">Checkout</h1>
         </div>
+
+        <CheckoutFlowOverview
+          step="guest"
+          localePrefix={localePrefix}
+          contactSummary={contactSummary}
+          deliverySummary={deliverySummary}
+          billingSummary={billingSummary}
+          paymentSummary="Payment starts after delivery details are confirmed"
+          contactComplete={contactComplete}
+          deliveryComplete={deliveryComplete}
+          billingComplete={billingComplete}
+          paymentComplete={false}
+        />
 
         <div className="checkout-grid">
           <section className="checkout-main">
@@ -1453,6 +1535,20 @@ export function CheckoutClient({ session, initialLoan }: Props) {
           <h1 className="page-title">Delivery &amp; billing</h1>
         </div>
 
+        <CheckoutFlowOverview
+          step="shipping"
+          localePrefix={localePrefix}
+          contactSummary={contactSummary}
+          deliverySummary={deliverySummary}
+          billingSummary={billingSummary}
+          paymentSummary="Secure payment unlocks once delivery and billing are ready"
+          contactComplete={contactComplete}
+          deliveryComplete={deliveryComplete}
+          billingComplete={billingComplete}
+          paymentComplete={false}
+          onEditContact={() => setStep('guest')}
+        />
+
         <form
           className="checkout-grid"
           onSubmit={(e) => {
@@ -1582,6 +1678,27 @@ export function CheckoutClient({ session, initialLoan }: Props) {
               </div>
             </div>
 
+            <div className="card section-gap billing-preference-card">
+              <p className="section-label">Billing preference</p>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={sameAsShipping}
+                className="billing-same-toggle"
+                onClick={() => {
+                  const next = !sameAsShipping;
+                  setSameAsShipping(next);
+                  if (next) setBillingAddr({ ...shippingAddr });
+                }}
+              >
+                <span className={`toggle-switch${sameAsShipping ? ' toggle-switch-on' : ''}`}>
+                  <span className="toggle-thumb" />
+                </span>
+                <span className="billing-same-label">Use shipping address for billing</span>
+              </button>
+            </div>
+
             {shippingConfirmed && shippingOptions.length > 0 && (
               <div className="card section-gap">
                 <p className="section-label">Shipping method</p>
@@ -1614,22 +1731,11 @@ export function CheckoutClient({ session, initialLoan }: Props) {
             <div className="card section-gap">
               <p className="section-label">Billing address</p>
 
-              <button
-                type="button"
-                role="switch"
-                aria-checked={sameAsShipping}
-                className="billing-same-toggle"
-                onClick={() => {
-                  const next = !sameAsShipping;
-                  setSameAsShipping(next);
-                  if (next) setBillingAddr({ ...shippingAddr });
-                }}
-              >
-                <span className={`toggle-switch${sameAsShipping ? ' toggle-switch-on' : ''}`}>
-                  <span className="toggle-thumb" />
-                </span>
-                <span className="billing-same-label">Same as shipping address</span>
-              </button>
+              {sameAsShipping && (
+                <p className="billing-same-summary">
+                  Billing will match your shipping address for this order.
+                </p>
+              )}
 
               {!sameAsShipping && (
                 <>
@@ -1718,6 +1824,12 @@ export function CheckoutClient({ session, initialLoan }: Props) {
         email={shippingAddr.email || guestEmail}
         name={`${shippingAddr.firstName} ${shippingAddr.lastName}`.trim()}
         city={shippingAddr.city}
+        contactSummary={contactSummary}
+        deliverySummary={deliverySummary}
+        billingSummary={billingSummary}
+        contactComplete={contactComplete}
+        deliveryComplete={deliveryComplete}
+        billingComplete={billingComplete}
         onBack={() => setStep('shipping')}
         localePrefix={localePrefix}
       />
@@ -1846,6 +1958,176 @@ function OrderSummaryCard({
   );
 }
 
+interface CheckoutFlowOverviewProps {
+  step: Step;
+  localePrefix: string;
+  contactSummary: string;
+  deliverySummary: string;
+  billingSummary: string;
+  paymentSummary: string;
+  contactComplete: boolean;
+  deliveryComplete: boolean;
+  billingComplete: boolean;
+  paymentComplete: boolean;
+  onEditContact?: () => void;
+  onEditDelivery?: () => void;
+}
+
+function CheckoutFlowOverview({
+  step,
+  localePrefix,
+  contactSummary,
+  deliverySummary,
+  billingSummary,
+  paymentSummary,
+  contactComplete,
+  deliveryComplete,
+  billingComplete,
+  paymentComplete,
+  onEditContact,
+  onEditDelivery,
+}: CheckoutFlowOverviewProps) {
+  const wizardSteps: Array<{ key: Step; label: string }> = [
+    { key: 'guest', label: 'Contact' },
+    { key: 'shipping', label: 'Delivery' },
+    { key: 'payment', label: 'Payment' },
+  ];
+  const currentWizardIndex = wizardSteps.findIndex((wizardStep) => wizardStep.key === step);
+  const currentSnapshotKey = step === 'guest' ? 'contact' : step === 'shipping' ? 'delivery' : 'payment';
+
+  const wizardNodes = wizardSteps.flatMap((wizardStep, index) => {
+    const state =
+      index < currentWizardIndex
+        ? 'complete'
+        : index === currentWizardIndex
+          ? 'current'
+          : 'upcoming';
+    const nodes: React.ReactNode[] = [
+      <div
+        key={`step-${wizardStep.key}`}
+        className={`checkout-progress-step checkout-progress-step-${state}`}
+        role="listitem"
+      >
+        <span className={`checkout-progress-badge checkout-progress-badge-${state}`}>
+          {state === 'complete' ? '✓' : index + 1}
+        </span>
+        <span className="checkout-progress-label">{wizardStep.label}</span>
+      </div>,
+    ];
+
+    if (index < wizardSteps.length - 1) {
+      nodes.push(
+        <span
+          key={`connector-${wizardStep.key}`}
+          className={`checkout-progress-connector${index < currentWizardIndex ? ' checkout-progress-connector-complete' : ''}`}
+          aria-hidden="true"
+        />,
+      );
+    }
+
+    return nodes;
+  });
+
+  type SnapshotRowKey = 'contact' | 'delivery' | 'billing' | 'payment';
+
+  const snapshotRows: Array<{
+    key: SnapshotRowKey;
+    label: string;
+    summary: string;
+    complete: boolean;
+    onEdit?: () => void;
+  }> = [
+    {
+      key: 'contact',
+      label: 'Contact',
+      summary: contactSummary,
+      complete: contactComplete,
+      onEdit: onEditContact,
+    },
+    {
+      key: 'delivery',
+      label: 'Delivery',
+      summary: deliverySummary,
+      complete: deliveryComplete,
+      onEdit: onEditDelivery,
+    },
+    {
+      key: 'billing',
+      label: 'Billing',
+      summary: billingSummary,
+      complete: billingComplete,
+      onEdit: onEditDelivery,
+    },
+    {
+      key: 'payment',
+      label: 'Payment',
+      summary: paymentSummary,
+      complete: paymentComplete,
+    },
+  ];
+
+  const resolveSnapshotState = (
+    rowKey: SnapshotRowKey,
+    complete: boolean,
+  ): 'complete' | 'current' | 'pending' => {
+    if (complete) {
+      return 'complete';
+    }
+
+    if (rowKey === currentSnapshotKey || (step === 'shipping' && rowKey === 'billing')) {
+      return 'current';
+    }
+
+    return 'pending';
+  };
+
+  return (
+    <section className="card section-gap checkout-flow-overview" aria-label="Checkout progress">
+      <div className="checkout-progress-track" role="list" aria-label="Checkout steps">
+        {wizardNodes}
+      </div>
+
+      <div className="checkout-snapshot-grid">
+        {snapshotRows.map((row) => {
+          const state = resolveSnapshotState(row.key, row.complete);
+
+          return (
+            <article key={row.key} className={`checkout-snapshot-row checkout-snapshot-row-${state}`}>
+              <div className="checkout-snapshot-row-top">
+                <p className="checkout-snapshot-label">{row.label}</p>
+                <span className={`checkout-snapshot-state checkout-snapshot-state-${state}`}>
+                  {state === 'complete' ? 'Completed' : state === 'current' ? 'In progress' : 'Pending'}
+                </span>
+              </div>
+
+              <p className="checkout-snapshot-value">{row.summary}</p>
+
+              {row.onEdit && row.complete && (
+                <button
+                  type="button"
+                  className="checkout-snapshot-edit"
+                  onClick={row.onEdit}
+                >
+                  Edit
+                </button>
+              )}
+            </article>
+          );
+        })}
+      </div>
+
+      <div className="checkout-flow-actions">
+        <a className="checkout-flow-link" href={`${localePrefix}/cart`}>
+          Edit cart
+        </a>
+        <a className="checkout-flow-link" href={localePrefix || '/'}>
+          Continue shopping
+        </a>
+      </div>
+    </section>
+  );
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function Spinner() {
@@ -1906,6 +2188,12 @@ interface PaymentStepProps {
   email: string;
   name: string;
   city: string;
+  contactSummary: string;
+  deliverySummary: string;
+  billingSummary: string;
+  contactComplete: boolean;
+  deliveryComplete: boolean;
+  billingComplete: boolean;
   onBack: () => void;
   localePrefix: string;
 }
@@ -2026,7 +2314,20 @@ function writeCachedPaymentMethods(checkoutId: string, methods: SdkPaymentMethod
   }
 }
 
-function PaymentStep({ session, email, name, city, onBack, localePrefix }: PaymentStepProps) {
+function PaymentStep({
+  session,
+  email,
+  name,
+  city,
+  contactSummary,
+  deliverySummary,
+  billingSummary,
+  contactComplete,
+  deliveryComplete,
+  billingComplete,
+  onBack,
+  localePrefix,
+}: PaymentStepProps) {
   const router = useRouter();
 
   const fmt = (n: number) =>
@@ -2229,7 +2530,7 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
       email,
       currency: session.currencyCode,
     });
-    const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl);
+    const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
 
     window.location.assign(hostedLaunchUrl);
   }, [email, localePrefix, session.checkoutId, session.currencyCode]);
@@ -2546,6 +2847,24 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
     submitting ||
     !paymentMethod ||
     (!manualSelected && cardSelected && !useHostedFallback && (cardFieldsLoading || !cardFieldsReady));
+  const selectedMethodLabel = selectedMethod?.name || selectedMethod?.method || 'Selected method';
+  const paymentSummary = loadingMethods
+    ? 'Loading payment options…'
+    : selectedMethod
+      ? useHostedFallback
+        ? `${selectedMethodLabel} · Continue in secure hosted checkout`
+        : cardSelected
+          ? cardFieldsReady
+            ? `${selectedMethodLabel} · Secure card fields are ready`
+            : `${selectedMethodLabel} · Preparing secure card fields`
+          : `${selectedMethodLabel} selected`
+      : 'Choose your payment method';
+  const paymentComplete = Boolean(selectedMethod) && (
+    manualSelected ||
+    useHostedFallback ||
+    !cardSelected ||
+    cardFieldsReady
+  );
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -2559,6 +2878,20 @@ function PaymentStep({ session, email, name, city, onBack, localePrefix }: Payme
           </button>
         </p>
       </div>
+
+      <CheckoutFlowOverview
+        step="payment"
+        localePrefix={localePrefix}
+        contactSummary={contactSummary}
+        deliverySummary={deliverySummary}
+        billingSummary={billingSummary}
+        paymentSummary={paymentSummary}
+        contactComplete={contactComplete}
+        deliveryComplete={deliveryComplete}
+        billingComplete={billingComplete}
+        paymentComplete={paymentComplete}
+        onEditDelivery={onBack}
+      />
 
       <form className="checkout-grid" onSubmit={(e) => { void handleSubmit(e); }}>
         <section className="checkout-main">
@@ -3212,13 +3545,13 @@ function MethodRadio({ checked, onChange, label, children }: MethodRadioProps) {
   );
 }
 
-async function resolveHostedLaunchUrl(checkoutUrl: string): Promise<string> {
+async function resolveHostedLaunchUrl(checkoutUrl: string, checkoutId: string): Promise<string> {
   const response = await fetch('/api/checkout/auth/hosted-login-url', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ checkoutUrl }),
+    body: JSON.stringify({ checkoutUrl, checkoutId }),
   });
 
   const payload = await parseHostedLaunchUrlResponse(response);
