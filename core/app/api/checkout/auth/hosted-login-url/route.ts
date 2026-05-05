@@ -20,6 +20,12 @@ interface RedirectUrlsResponse {
   };
 }
 
+const BIGCOMMERCE_MANAGED_HOST_SUFFIXES = [
+  '.mybigcommerce.com',
+  '.bigcommerce.com',
+  '.bigcommerce.net',
+];
+
 function normalizeHostname(hostname: string): string {
   return hostname.trim().toLowerCase().replace(/\.$/, '');
 }
@@ -74,6 +80,7 @@ function isValidCheckoutId(checkoutId: string): boolean {
 
 function resolveCheckoutIdFromUrl(checkoutUrl: URL): string | undefined {
   const candidates = ['checkoutId', 'checkout_id', 'cartId', 'cart_id', 'id'];
+  const hashParams = new URLSearchParams(checkoutUrl.hash.replace(/^#\??/, ''));
 
   for (const key of candidates) {
     const value = checkoutUrl.searchParams.get(key)?.trim();
@@ -81,13 +88,37 @@ function resolveCheckoutIdFromUrl(checkoutUrl: URL): string | undefined {
     if (value && isValidCheckoutId(value)) {
       return value;
     }
+
+    const hashValue = hashParams.get(key)?.trim();
+
+    if (hashValue && isValidCheckoutId(hashValue)) {
+      return hashValue;
+    }
+  }
+
+  // Some BigCommerce redirects carry the checkout/cart identifier in the URL path.
+  const pathSegments = checkoutUrl.pathname.split('/').map((segment) => segment.trim());
+
+  for (let index = pathSegments.length - 1; index >= 0; index -= 1) {
+    const segment = pathSegments[index];
+
+    if (
+      segment &&
+      isValidCheckoutId(segment) &&
+      segment.length >= 8 &&
+      /\d/.test(segment)
+    ) {
+      return segment;
+    }
   }
 
   return undefined;
 }
 
 function isBigCommerceManagedCheckoutHost(hostname: string): boolean {
-  return hostname === 'checkout.bigcommerce.com' || hostname.endsWith('.mybigcommerce.com');
+  const normalized = normalizeHostname(hostname);
+
+  return BIGCOMMERCE_MANAGED_HOST_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
 }
 
 function buildTrustedCheckoutHosts(): Set<string> {
@@ -158,28 +189,64 @@ async function resolveCheckoutHostsFromBigCommerce(checkoutId: string): Promise<
   return hosts;
 }
 
-async function assertTrustedCheckoutHost(checkoutUrl: URL, checkoutId?: string): Promise<void> {
+function reconcileCheckoutUrl(
+  trustedCheckoutUrl: URL,
+  requestedCheckoutUrl: URL,
+): URL {
+  const reconciled = new URL(trustedCheckoutUrl.toString());
+
+  for (const [key, value] of requestedCheckoutUrl.searchParams.entries()) {
+    reconciled.searchParams.set(key, value);
+  }
+
+  reconciled.hash = requestedCheckoutUrl.hash;
+
+  return reconciled;
+}
+
+async function resolveTrustedCheckoutUrl(checkoutUrl: URL, checkoutId?: string): Promise<URL> {
   const checkoutHost = normalizeHostname(checkoutUrl.hostname);
   const trustedHosts = buildTrustedCheckoutHosts();
 
   if (trustedHosts.has(checkoutHost)) {
-    return;
+    return checkoutUrl;
   }
 
   if (checkoutId && isValidCheckoutId(checkoutId)) {
     const verifiedHosts = await resolveCheckoutHostsFromBigCommerce(checkoutId);
 
     if (verifiedHosts.has(checkoutHost)) {
-      return;
+      return checkoutUrl;
+    }
+
+    // Some stores can receive valid redirect URLs while the redirect host payload is empty.
+    // In that case, continue for known BigCommerce-managed domains after checkoutId verification.
+    if (verifiedHosts.size === 0 && isBigCommerceManagedCheckoutHost(checkoutHost)) {
+      return checkoutUrl;
     }
 
     // Some BigCommerce-managed checkout hosts vary by edge routing while still being valid
-    // for the same checkout/cart. Allow these only after successful checkoutId verification.
+    // for the same checkout/cart. Reconcile to one verified host while preserving query params.
     if (
       isBigCommerceManagedCheckoutHost(checkoutHost) &&
       Array.from(verifiedHosts).some((host) => isBigCommerceManagedCheckoutHost(host))
     ) {
-      return;
+      const verifiedHost = Array.from(verifiedHosts).find((host) =>
+        isBigCommerceManagedCheckoutHost(host),
+      );
+
+      if (verifiedHost) {
+        const reconciledCheckoutUrl = reconcileCheckoutUrl(
+          new URL(`${checkoutUrl.protocol}//${verifiedHost}${checkoutUrl.pathname}`),
+          checkoutUrl,
+        );
+
+        console.warn(
+          `[hosted-login-url] checkout host mismatch reconciled for checkoutId=${checkoutId} requestedHost=${checkoutHost} verifiedHost=${verifiedHost}`,
+        );
+
+        return reconciledCheckoutUrl;
+      }
     }
   }
 
@@ -238,14 +305,14 @@ export async function POST(req: NextRequest) {
     }
 
     const checkoutUrl = parseCheckoutUrl(checkoutUrlRaw);
-  const checkoutId = checkoutIdRaw || resolveCheckoutIdFromUrl(checkoutUrl);
-    await assertTrustedCheckoutHost(checkoutUrl, checkoutId);
+    const checkoutId = checkoutIdRaw || resolveCheckoutIdFromUrl(checkoutUrl);
+    const trustedCheckoutUrl = await resolveTrustedCheckoutUrl(checkoutUrl, checkoutId);
     const session = await auth();
     const sessionEmail = session?.user?.email?.trim().toLowerCase();
 
     if (!sessionEmail) {
       return NextResponse.json({
-        launchUrl: checkoutUrl.toString(),
+        launchUrl: trustedCheckoutUrl.toString(),
         identityCarried: false,
       });
     }
@@ -262,9 +329,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const redirectTo = `${checkoutUrl.pathname}${checkoutUrl.search}${checkoutUrl.hash}`;
+    const redirectTo = `${trustedCheckoutUrl.pathname}${trustedCheckoutUrl.search}${trustedCheckoutUrl.hash}`;
     const token = await generateCustomerLoginApiJwt(customer.id, resolveChannelId(), redirectTo);
-    const launchUrl = `${checkoutUrl.origin}/login/token/${token}`;
+    const launchUrl = `${trustedCheckoutUrl.origin}/login/token/${token}`;
 
     return NextResponse.json({
       launchUrl,
