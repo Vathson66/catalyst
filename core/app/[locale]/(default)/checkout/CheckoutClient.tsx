@@ -1,22 +1,8 @@
 'use client';
 
-import {
-  createCheckoutService,
-  type CheckoutService,
-  type LegacyHostedFormOptions,
-  type PaymentMethod as CheckoutSdkPaymentMethod,
-} from '@bigcommerce/checkout-sdk';
-import { createCBAMPGSPaymentStrategy } from '@bigcommerce/checkout-sdk/integrations/cba-mpgs';
-import { createCreditCardPaymentStrategy } from '@bigcommerce/checkout-sdk/integrations/credit-card';
-import {
-  createCyberSourcePaymentStrategy,
-  createCyberSourceV2PaymentStrategy,
-} from '@bigcommerce/checkout-sdk/integrations/cybersource';
-import { createNoPaymentStrategy } from '@bigcommerce/checkout-sdk/integrations/no-payment';
-import { createSagePayPaymentStrategy } from '@bigcommerce/checkout-sdk/integrations/sagepay';
 import { useLocale } from 'next-intl';
 import { usePathname, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { CheckoutSdkAdapter } from '~/lib/checkout/sdk-adapter';
 import type { SdkPaymentMethod, SdkShippingOption } from '~/lib/checkout/sdk-adapter';
@@ -58,6 +44,7 @@ const DEFAULT_HOSTED_RETURN_URL_PARAM = 'catalyst_return_url';
 const DEFAULT_HOSTED_PAYMENT_ONLY_PARAM = 'catalyst_payment_only';
 const DEFAULT_HOSTED_CHECKOUT_URL_PARAM = 'catalyst_checkout_url';
 const DEFAULT_HOSTED_CART_URL_PARAM = 'catalyst_cart_url';
+const DEFAULT_HOSTED_RETURN_TOKEN_PARAM = 'catalyst_order_token';
 const DEFAULT_HOSTED_RETURN_SOURCE = 'hosted-checkout';
 const HOSTED_CHECKOUT_EDIT_SOURCE = 'hosted-checkout-edit';
 const CHECKOUT_DRAFT_STORAGE_KEY_PREFIX = 'co-checkout-draft-v1';
@@ -379,6 +366,7 @@ interface HostedCheckoutFlowConfig {
   paymentOnlyParam: string;
   checkoutUrlParam: string;
   cartUrlParam: string;
+  returnTokenParam: string;
   returnUrlOverride?: string;
 }
 
@@ -410,7 +398,10 @@ function resolveHostedCheckoutFlowConfig(): HostedCheckoutFlowConfig {
   const returnUrlOverride = process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_RETURN_URL?.trim();
 
   return {
-    enabled: true,
+    enabled: parseBooleanValue(
+      process.env.NEXT_PUBLIC_CHECKOUT_FORCE_HOSTED_PAYMENT_FLOW,
+      DEFAULT_HOSTED_PAYMENT_FLOW_ENABLED,
+    ),
     paymentOnlyMode: parseBooleanValue(
       process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_PAYMENT_ONLY_MODE,
       DEFAULT_HOSTED_PAYMENT_ONLY_MODE,
@@ -430,6 +421,10 @@ function resolveHostedCheckoutFlowConfig(): HostedCheckoutFlowConfig {
     cartUrlParam: sanitizeQueryParamName(
       process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_CART_URL_PARAM,
       DEFAULT_HOSTED_CART_URL_PARAM,
+    ),
+    returnTokenParam: sanitizeQueryParamName(
+      process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_RETURN_TOKEN_PARAM,
+      DEFAULT_HOSTED_RETURN_TOKEN_PARAM,
     ),
     returnUrlOverride: returnUrlOverride || undefined,
   };
@@ -1114,10 +1109,16 @@ export function CheckoutClient({ session, initialLoan }: Props) {
           const checkoutUrl = hostedCheckoutUrlPromise
             ? await hostedCheckoutUrlPromise
             : await resolveHostedCheckoutUrl(session.checkoutId);
+          const returnToken = await resolveCheckoutReturnToken({
+            checkoutId: session.checkoutId,
+            email: shippingAddr.email || guestEmail,
+            currency: session.currencyCode,
+          });
           const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, {
             localePrefix,
             email: shippingAddr.email || guestEmail,
             currency: session.currencyCode,
+            returnToken,
           });
           const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
 
@@ -2198,36 +2199,10 @@ interface PaymentStepProps {
   localePrefix: string;
 }
 
-interface HostedFieldErrors {
-  cardNumber: string;
-  cardExpiry: string;
-  cardName: string;
-  cardCode: string;
-}
-
-interface HostedFieldIds {
-  cardNumber: string;
-  cardExpiry: string;
-  cardName: string;
-  cardCode: string;
-}
-
-interface ActivePaymentMethodRef {
-  methodId: string;
-  gatewayId?: string;
-}
-
 interface CachedPaymentMethods {
   methods: SdkPaymentMethod[];
   cachedAt: number;
 }
-
-const EMPTY_HOSTED_FIELD_ERRORS: HostedFieldErrors = {
-  cardNumber: '',
-  cardExpiry: '',
-  cardName: '',
-  cardCode: '',
-};
 
 const DEFAULT_PAYMENT_METHODS_CACHE_PREFIX = 'co-payment-methods-v1';
 const DEFAULT_PAYMENT_METHODS_CACHE_TTL_MS = 60 * 1000;
@@ -2341,17 +2316,6 @@ function PaymentStep({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [sdkReady, setSdkReady] = useState(false);
-  const [cardFieldsLoading, setCardFieldsLoading] = useState(false);
-  const [cardFieldsReady, setCardFieldsReady] = useState(false);
-  const [headlessError, setHeadlessError] = useState<string | null>(null);
-  const [hostedFieldErrors, setHostedFieldErrors] =
-    useState<HostedFieldErrors>(EMPTY_HOSTED_FIELD_ERRORS);
-
-  const checkoutServiceRef = useRef<CheckoutService | null>(null);
-  const sdkPaymentMethodsRef = useRef<CheckoutSdkPaymentMethod[]>([]);
-  const activePaymentMethodRef = useRef<ActivePaymentMethodRef | null>(null);
-  const activePaymentMethodKeyRef = useRef<string | null>(null);
   const submitLockRef = useRef(false);
 
   const [useLoan, setUseLoan] = useState(false);
@@ -2362,98 +2326,6 @@ function PaymentStep({
   const maxLoan = Math.min(session.loan.approvedAmount, session.grandTotal);
   const showLoan = session.loanEnabled && session.loan.eligible;
   const dueTodayWithLoan = Math.max(session.grandTotal - loanAmount, 0);
-
-  const hostedFieldIds = useMemo<HostedFieldIds>(() => {
-    const suffix = paymentMethod.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase() || 'card';
-
-    return {
-      cardNumber: `co-card-number-${suffix}`,
-      cardExpiry: `co-card-expiry-${suffix}`,
-      cardName: `co-card-name-${suffix}`,
-      cardCode: `co-card-code-${suffix}`,
-    };
-  }, [paymentMethod]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const probe = await fetch(
-          `/api/storefront/checkout/${encodeURIComponent(session.checkoutId)}?include=payments`,
-          {
-            headers: {
-              Accept: 'application/vnd.bc.v1+json',
-            },
-          },
-        );
-
-        if (!probe.ok) {
-          const bodyText = await probe.text();
-          let detail = `HTTP ${probe.status}`;
-
-          if (bodyText) {
-            try {
-              const payload = JSON.parse(bodyText) as {
-                detail?: string;
-                title?: string;
-                error?: string;
-              };
-              detail = payload.detail ?? payload.title ?? payload.error ?? detail;
-            } catch {
-              detail = bodyText;
-            }
-          }
-
-          if (cancelled) {
-            return;
-          }
-
-          setSdkReady(false);
-          setHeadlessError(
-            `In-page secure fields are unavailable for this checkout (${detail}). Continue using secure hosted checkout.`,
-          );
-
-          return;
-        }
-
-        const service = createCheckoutService({ host: window.location.origin });
-        checkoutServiceRef.current = service;
-
-        await service.loadCheckout(session.checkoutId);
-        const state = await service.loadPaymentMethods();
-
-        if (cancelled) {
-          return;
-        }
-
-        sdkPaymentMethodsRef.current = state.data.getPaymentMethods() ?? [];
-        setSdkReady(true);
-        setHeadlessError(null);
-      } catch (err) {
-        if (cancelled) {
-          return;
-        }
-
-        setSdkReady(false);
-        setHeadlessError(
-          err instanceof Error
-            ? err.message
-            : 'Could not initialize secure payment service.',
-        );
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-
-      const active = activePaymentMethodRef.current;
-      const service = checkoutServiceRef.current;
-      if (active && service) {
-        void service.deinitializePayment(active).catch(() => undefined);
-      }
-    };
-  }, [session.checkoutId]);
 
   // ── Load payment methods from BigCommerce payment settings ────────────────
 
@@ -2519,166 +2391,23 @@ function PaymentStep({
     };
   }, [session.checkoutId]);
 
-  const resolveSdkMethod = useCallback((method: SdkPaymentMethod) => {
-    return resolveSdkMethodForSelection(method, sdkPaymentMethodsRef.current);
-  }, []);
-
   const redirectToHostedCheckout = useCallback(async () => {
     const checkoutUrl = await resolveHostedCheckoutUrl(session.checkoutId);
+    const returnToken = await resolveCheckoutReturnToken({
+      checkoutId: session.checkoutId,
+      email,
+      currency: session.currencyCode,
+    });
     const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, {
       localePrefix,
       email,
       currency: session.currencyCode,
+      returnToken,
     });
     const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
 
     window.location.assign(hostedLaunchUrl);
   }, [email, localePrefix, session.checkoutId, session.currencyCode]);
-
-  useEffect(() => {
-    const selectedMethod = availableMethods.find((m) => m.id === paymentMethod);
-    const service = checkoutServiceRef.current;
-
-    if (!selectedMethod || isManualMethod(selectedMethod)) {
-      setCardFieldsLoading(false);
-      setCardFieldsReady(false);
-      setHeadlessError(null);
-      setHostedFieldErrors(EMPTY_HOSTED_FIELD_ERRORS);
-      return;
-    }
-
-    const sdkMethod = resolveSdkMethod(selectedMethod);
-
-    if (!sdkMethod) {
-      setCardFieldsLoading(false);
-      setCardFieldsReady(false);
-      setHeadlessError('The selected method is unavailable for headless checkout.');
-      return;
-    }
-
-    const cardSelected = isCardLikeMethod(selectedMethod) || isCardSdkMethod(sdkMethod);
-
-    if (!cardSelected) {
-      setCardFieldsLoading(false);
-      setCardFieldsReady(false);
-      setHeadlessError(null);
-      setHostedFieldErrors(EMPTY_HOSTED_FIELD_ERRORS);
-      return;
-    }
-
-    if (!service || !sdkReady) {
-      setCardFieldsLoading(true);
-      setCardFieldsReady(false);
-      return;
-    }
-
-    const nextKey = getUniqueMethodKey(sdkMethod.id, sdkMethod.gateway);
-
-    if (activePaymentMethodKeyRef.current === nextKey) {
-      setCardFieldsLoading(false);
-      setCardFieldsReady(true);
-      return;
-    }
-
-    let cancelled = false;
-    setCardFieldsLoading(true);
-    setCardFieldsReady(false);
-    setHeadlessError(null);
-    setHostedFieldErrors(EMPTY_HOSTED_FIELD_ERRORS);
-
-    void (async () => {
-      try {
-        const active = activePaymentMethodRef.current;
-        if (active) {
-          await service.deinitializePayment(active);
-        }
-
-        const formOptions: LegacyHostedFormOptions = {
-          fields: {
-            cardNumber: {
-              accessibilityLabel: 'Card number',
-              containerId: hostedFieldIds.cardNumber,
-            },
-            cardExpiry: {
-              accessibilityLabel: 'Expiry date',
-              containerId: hostedFieldIds.cardExpiry,
-              placeholder: 'MM / YY',
-            },
-            cardName: {
-              accessibilityLabel: 'Name on card',
-              containerId: hostedFieldIds.cardName,
-            },
-            cardCode: {
-              accessibilityLabel: 'Security code',
-              containerId: hostedFieldIds.cardCode,
-            },
-          },
-          onValidate: ({ errors = {} }) => {
-            const nextErrors: HostedFieldErrors = { ...EMPTY_HOSTED_FIELD_ERRORS };
-            const indexedErrors = errors as Record<string, Array<{ type?: string }> | undefined>;
-
-            const resolveErrorType = (fieldType: string): string => {
-              const fieldErrors = indexedErrors[fieldType];
-              const firstErrorType = fieldErrors?.[0]?.type;
-
-              return mapHostedFieldError(firstErrorType);
-            };
-
-            nextErrors.cardNumber = resolveErrorType('cardNumber');
-            nextErrors.cardExpiry = resolveErrorType('cardExpiry');
-            nextErrors.cardName = resolveErrorType('cardName');
-            nextErrors.cardCode = resolveErrorType('cardCode');
-
-            setHostedFieldErrors(nextErrors);
-          },
-        };
-
-        await service.initializePayment({
-          methodId: sdkMethod.id,
-          gatewayId: sdkMethod.gateway,
-          integrations: [
-            createNoPaymentStrategy,
-            createCreditCardPaymentStrategy,
-            createCyberSourcePaymentStrategy,
-            createCyberSourceV2PaymentStrategy,
-            createSagePayPaymentStrategy,
-            createCBAMPGSPaymentStrategy,
-          ],
-          creditCard: { form: formOptions },
-        });
-
-        if (cancelled) {
-          return;
-        }
-
-        activePaymentMethodRef.current = {
-          methodId: sdkMethod.id,
-          gatewayId: sdkMethod.gateway,
-        };
-        activePaymentMethodKeyRef.current = nextKey;
-        setCardFieldsReady(true);
-      } catch (err) {
-        if (cancelled) {
-          return;
-        }
-
-        setCardFieldsReady(false);
-        setHeadlessError(
-          err instanceof Error
-            ? err.message
-            : 'Could not initialize secure card fields for this method.',
-        );
-      } finally {
-        if (!cancelled) {
-          setCardFieldsLoading(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [availableMethods, paymentMethod, resolveSdkMethod, hostedFieldIds, sdkReady]);
 
   // ── Submit ────────────────────────────────────────────────────────────────
 
@@ -2702,6 +2431,12 @@ function PaymentStep({
 
         if (isManualMethod(selectedMethod)) {
           let appliedLoan = 0;
+          const returnToken = await resolveCheckoutReturnToken({
+            checkoutId: session.checkoutId,
+            email,
+            currency: session.currencyCode,
+          });
+
           if (session.loanEnabled && session.loan.eligible && useLoan) {
             const res = await fetch('/api/checkout/apply-loan', {
               method: 'POST',
@@ -2739,78 +2474,14 @@ function PaymentStep({
             email,
             currency: session.currencyCode,
           });
+          params.set(HOSTED_CHECKOUT_FLOW_CONFIG.returnTokenParam, returnToken);
           clearPersistedCheckoutDraft(session.checkoutId);
           router.push(`${localePrefix}/checkout/order-confirmation?${params.toString()}`);
           return;
         }
 
-        // Track A first: only use hosted checkout when secure in-page APIs
-        // are not available for this environment/checkout context.
-        if (headlessError) {
-          await redirectToHostedCheckout();
-          return;
-        }
-
-        const service = checkoutServiceRef.current;
-        if (!service || !sdkReady) {
-          throw new Error('Secure payment is still initializing. Please try again.');
-        }
-
-        const sdkMethod = resolveSdkMethod(selectedMethod);
-        if (!sdkMethod) {
-          throw new Error('Selected method is unavailable for headless checkout.');
-        }
-
-        const cardSelected = isCardLikeMethod(selectedMethod) || isCardSdkMethod(sdkMethod);
-        if (cardSelected && !cardFieldsReady) {
-          throw new Error(
-            cardFieldsLoading
-              ? 'Secure card fields are still loading. Please wait a moment.'
-              : 'Secure card fields are not ready. Please reselect your payment method.',
-          );
-        }
-
-        try {
-          const state = await service.submitOrder({
-            payment: {
-              methodId: sdkMethod.id,
-              gatewayId: sdkMethod.gateway,
-            },
-          });
-
-          const orderId = state.data.getOrder()?.orderId;
-          if (!orderId) {
-            throw new Error('Order was submitted but no order ID was returned.');
-          }
-
-          const params = new URLSearchParams({
-            orderId: String(orderId),
-            total: String(session.grandTotal),
-            paid: String(session.grandTotal),
-            loanApplied: '0',
-            email,
-            currency: session.currencyCode,
-          });
-          clearPersistedCheckoutDraft(session.checkoutId);
-          router.push(`${localePrefix}/checkout/order-confirmation?${params.toString()}`);
-          return;
-        } catch (sdkErr) {
-          const redirectUrl = getProviderRedirectUrl(sdkErr);
-          if (redirectUrl) {
-            window.location.assign(redirectUrl);
-            return;
-          }
-
-          if (shouldFallbackToHostedCheckout(sdkErr)) {
-            setHeadlessError(
-              'In-page secure payment is temporarily unavailable. Continue using secure hosted checkout.',
-            );
-            await redirectToHostedCheckout();
-            return;
-          }
-
-          throw sdkErr;
-        }
+        await redirectToHostedCheckout();
+        return;
       } catch (err) {
         setError(
           err instanceof Error ? err.message : 'Something went wrong. Please try again.',
@@ -2826,12 +2497,7 @@ function PaymentStep({
       useLoan,
       loanAmount,
       availableMethods,
-      cardFieldsLoading,
-      cardFieldsReady,
-      sdkReady,
-      headlessError,
       redirectToHostedCheckout,
-      resolveSdkMethod,
       router,
       localePrefix,
       email,
@@ -2840,31 +2506,19 @@ function PaymentStep({
 
   const selectedMethod = availableMethods.find((m) => m.id === paymentMethod);
   const manualSelected = selectedMethod ? isManualMethod(selectedMethod) : false;
-  const cardSelected = selectedMethod ? isCardLikeMethod(selectedMethod) : false;
-  const useHostedFallback = !manualSelected && Boolean(headlessError);
   const showLoanForSelection = showLoan && manualSelected;
   const disableSubmit =
     submitting ||
-    !paymentMethod ||
-    (!manualSelected && cardSelected && !useHostedFallback && (cardFieldsLoading || !cardFieldsReady));
+    !paymentMethod;
   const selectedMethodLabel = selectedMethod?.name || selectedMethod?.method || 'Selected method';
   const paymentSummary = loadingMethods
     ? 'Loading payment options…'
     : selectedMethod
-      ? useHostedFallback
-        ? `${selectedMethodLabel} · Continue in secure hosted checkout`
-        : cardSelected
-          ? cardFieldsReady
-            ? `${selectedMethodLabel} · Secure card fields are ready`
-            : `${selectedMethodLabel} · Preparing secure card fields`
-          : `${selectedMethodLabel} selected`
+      ? manualSelected
+        ? `${selectedMethodLabel} selected`
+        : `${selectedMethodLabel} · Continue in secure hosted checkout`
       : 'Choose your payment method';
-  const paymentComplete = Boolean(selectedMethod) && (
-    manualSelected ||
-    useHostedFallback ||
-    !cardSelected ||
-    cardFieldsReady
-  );
+  const paymentComplete = Boolean(selectedMethod);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -2991,63 +2645,13 @@ function PaymentStep({
             </div>
           )}
 
-          {!manualSelected && selectedMethod && cardSelected && (
+          {!manualSelected && selectedMethod && (
             <div className="card section-gap">
-              <p className="section-label">Card details</p>
-
-              {cardFieldsLoading && (
-                <p className="hosted-fields-loading">
-                  <Spinner /> Loading secure card fields…
-                </p>
-              )}
-
-              {headlessError ? (
-                <div className="hosted-fields-unavailable">{headlessError}</div>
-              ) : (
-                <div className="card-form">
-                  <label className="form-field form-field-full">
-                    <span className="field-label">Card number</span>
-                    <div id={hostedFieldIds.cardNumber} className="hosted-field-container" />
-                    {hostedFieldErrors.cardNumber && (
-                      <span className="hosted-field-error">{hostedFieldErrors.cardNumber}</span>
-                    )}
-                  </label>
-
-                  <div className="form-row form-row-cols">
-                    <label className="form-field">
-                      <span className="field-label">Expiry</span>
-                      <div id={hostedFieldIds.cardExpiry} className="hosted-field-container" />
-                      {hostedFieldErrors.cardExpiry && (
-                        <span className="hosted-field-error">{hostedFieldErrors.cardExpiry}</span>
-                      )}
-                    </label>
-                    <label className="form-field">
-                      <span className="field-label">Security code</span>
-                      <div id={hostedFieldIds.cardCode} className="hosted-field-container" />
-                      {hostedFieldErrors.cardCode && (
-                        <span className="hosted-field-error">{hostedFieldErrors.cardCode}</span>
-                      )}
-                    </label>
-                  </div>
-
-                  <label className="form-field form-field-full">
-                    <span className="field-label">Name on card</span>
-                    <div id={hostedFieldIds.cardName} className="hosted-field-container" />
-                    {hostedFieldErrors.cardName && (
-                      <span className="hosted-field-error">{hostedFieldErrors.cardName}</span>
-                    )}
-                  </label>
-                </div>
-              )}
-            </div>
-          )}
-
-          {!manualSelected && selectedMethod && !cardSelected && (
-            <div className="card section-gap">
-              <p className="section-label">Secure payment processing</p>
+              <p className="section-label">Secure payment</p>
               <p style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.6 }}>
-                You selected <strong>{selectedMethod.name}</strong>. This method is processed from the
-                same checkout flow and may open a secure provider authorization window.
+                You selected <strong>{selectedMethod.name}</strong>. Payment details are finalized in
+                BigCommerce&apos;s secure payment step, then you&apos;ll return here for your order
+                confirmation.
               </p>
             </div>
           )}
@@ -3069,12 +2673,8 @@ function PaymentStep({
               'Place order — pay by check'
             ) : manualSelected ? (
               `Place order — ${fmt(showLoanForSelection && useLoan ? dueTodayWithLoan : session.grandTotal)}`
-            ) : useHostedFallback ? (
-              'Continue in secure hosted checkout'
-            ) : cardSelected ? (
-              'Place order securely'
             ) : (
-              'Continue to secure authorization'
+              'Continue in secure hosted checkout'
             )}
           </button>
         </section>
@@ -3209,117 +2809,15 @@ function isManualMethod(m: SdkPaymentMethod): boolean {
   return inferMethodKind(m) === 'manual';
 }
 
-function isCardLikeMethod(m: SdkPaymentMethod): boolean {
-  const method = (m.method || '').toLowerCase();
-  const id = m.id.toLowerCase();
-
-  return (
-    method.includes('credit-card') ||
-    method.includes('card') ||
-    id.includes('.card') ||
-    id.includes('credit') ||
-    id === 'bigpaypay'
-  );
-}
-
-function isCardSdkMethod(m: CheckoutSdkPaymentMethod): boolean {
-  const method = (m.method || '').toLowerCase();
-  const id = m.id.toLowerCase();
-
-  return method === 'credit-card' || method.includes('card') || id.includes('card');
-}
-
-function normalizeMethodToken(value?: string): string {
-  return (value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
-function getUniqueMethodKey(methodId: string, gatewayId?: string): string {
-  return `${methodId}::${gatewayId ?? ''}`;
-}
-
-function resolveSdkMethodForSelection(
-  selectedMethod: SdkPaymentMethod,
-  sdkMethods: CheckoutSdkPaymentMethod[],
-): CheckoutSdkPaymentMethod | undefined {
-  if (sdkMethods.length === 0) {
-    return undefined;
-  }
-
-  const byExactIdAndGateway = sdkMethods.find(
-    (m) => m.id === selectedMethod.id && m.gateway === selectedMethod.gateway,
-  );
-
-  if (byExactIdAndGateway) {
-    return byExactIdAndGateway;
-  }
-
-  const byExactId = sdkMethods.find((m) => m.id === selectedMethod.id);
-  if (byExactId) {
-    return byExactId;
-  }
-
-  const selectedId = normalizeMethodToken(selectedMethod.id);
-  const selectedGateway = normalizeMethodToken(selectedMethod.gateway);
-
-  const byNormalized = sdkMethods.find((m) => {
-    const methodId = normalizeMethodToken(m.id);
-    const gatewayId = normalizeMethodToken(m.gateway);
-
-    if (selectedGateway) {
-      return methodId === selectedId && gatewayId === selectedGateway;
-    }
-
-    return methodId === selectedId;
-  });
-
-  if (byNormalized) {
-    return byNormalized;
-  }
-
-  const selectedType = (selectedMethod.method || '').toLowerCase();
-
-  if (isCardLikeMethod(selectedMethod)) {
-    return sdkMethods.find((m) => isCardSdkMethod(m));
-  }
-
-  if (selectedType.includes('paypal')) {
-    return sdkMethods.find((m) => (m.method || '').toLowerCase().includes('paypal'));
-  }
-
-  if (selectedType.includes('google')) {
-    return sdkMethods.find((m) => (m.method || '').toLowerCase().includes('google'));
-  }
-
-  if (selectedType.includes('apple')) {
-    return sdkMethods.find((m) => (m.method || '').toLowerCase().includes('apple'));
-  }
-
-  if (selectedType.includes('amazon')) {
-    return sdkMethods.find((m) => (m.method || '').toLowerCase().includes('amazon'));
-  }
-
-  return sdkMethods[0];
-}
-
-function mapHostedFieldError(errorType?: string): string {
-  switch (errorType) {
-    case 'required':
-      return 'Required field.';
-    case 'invalid_card_number':
-      return 'Invalid card number.';
-    case 'invalid_card_expiry':
-      return 'Invalid expiry date.';
-    case 'invalid_card_name':
-      return 'Invalid cardholder name.';
-    case 'invalid_card_code':
-      return 'Invalid security code.';
-    default:
-      return '';
-  }
-}
-
 interface HostedCheckoutLaunchOptions {
   localePrefix: string;
+  email?: string;
+  currency?: string;
+  returnToken?: string;
+}
+
+interface CheckoutReturnTokenRequest {
+  checkoutId: string;
   email?: string;
   currency?: string;
 }
@@ -3328,6 +2826,7 @@ function resolveHostedReturnUrl({
   localePrefix,
   email,
   currency,
+  returnToken,
 }: HostedCheckoutLaunchOptions): string {
   const fallbackPath = `${localePrefix}/checkout/order-confirmation`;
   const target = new URL(
@@ -3341,6 +2840,10 @@ function resolveHostedReturnUrl({
 
   if (currency) {
     target.searchParams.set('currency', currency);
+  }
+
+  if (returnToken) {
+    target.searchParams.set(HOSTED_CHECKOUT_FLOW_CONFIG.returnTokenParam, returnToken);
   }
 
   target.searchParams.set('source', DEFAULT_HOSTED_RETURN_SOURCE);
@@ -3385,6 +2888,34 @@ interface HostedLaunchUrlResponse {
   identityCarried?: boolean;
   error?: string;
   detail?: string;
+}
+
+interface CheckoutReturnTokenResponse {
+  token?: string;
+  error?: string;
+}
+
+async function resolveCheckoutReturnToken({
+  checkoutId,
+  email,
+  currency,
+}: CheckoutReturnTokenRequest): Promise<string> {
+  const res = await fetch('/api/checkout/return-token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ checkoutId, email, currency }),
+  });
+  const payload = (await res.json()) as CheckoutReturnTokenResponse;
+
+  if (res.ok && payload.token) {
+    return payload.token;
+  }
+
+  throw new Error(
+    payload.error ?? `Could not prepare secure checkout return [${res.status}].`,
+  );
 }
 
 async function resolveHostedCheckoutUrl(checkoutId: string): Promise<string> {
@@ -3447,66 +2978,10 @@ async function parseHostedCheckoutResponse(
   }
 }
 
-function shouldFallbackToHostedCheckout(error: unknown): boolean {
-  const maybeError = error as {
-    message?: string;
-    status?: number;
-    body?: {
-      status?: number;
-      type?: string;
-      title?: string;
-      detail?: string;
-    };
-  };
-
-  const status = maybeError.status ?? maybeError.body?.status;
-
-  if (typeof status === 'number') {
-    if ([401, 403, 404, 409].includes(status)) {
-      return true;
-    }
-
-    if (status >= 500) {
-      return true;
-    }
-  }
-
-  const signal = [
-    maybeError.message,
-    maybeError.body?.type,
-    maybeError.body?.title,
-    maybeError.body?.detail,
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-
-  return (
-    signal.includes('checkout not found') ||
-    signal.includes('unauthorized') ||
-    signal.includes('forbidden') ||
-    signal.includes('bigpaybaseurl') ||
-    signal.includes('headless checkout')
-  );
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-function getProviderRedirectUrl(error: unknown): string | undefined {
-  const maybeError = error as {
-    body?: { type?: string };
-    headers?: { location?: string };
-  };
-
-  if (maybeError.body?.type === 'provider_error' && maybeError.headers?.location) {
-    return maybeError.headers.location;
-  }
-
-  return undefined;
 }
 
 function manualInstruction(method: string): string {
