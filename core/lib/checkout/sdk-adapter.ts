@@ -9,6 +9,8 @@
  * This file must only be imported in client components ('use client').
  */
 
+import type { CheckoutSession } from './types';
+
 export interface SdkShippingOption {
   id: string;
   description: string;
@@ -37,6 +39,11 @@ type AddressInput = {
   phone?: string;
   email?: string;
 };
+
+interface SelectShippingResponse {
+  error?: string;
+  session?: CheckoutSession;
+}
 
 const MOCK_SHIPPING_OPTIONS: SdkShippingOption[] = [
   {
@@ -126,8 +133,8 @@ export class CheckoutSdkAdapter {
     return options.length > 0 ? options : MOCK_SHIPPING_OPTIONS;
   }
 
-  async selectShippingOption(optionId: string): Promise<void> {
-    if (this.isMock) return;
+  async selectShippingOption(optionId: string): Promise<CheckoutSession | null> {
+    if (this.isMock) return null;
 
     const consignmentId = this.consignmentId;
     if (!consignmentId) throw new Error('No consignment — call loadShippingOptions first');
@@ -138,10 +145,13 @@ export class CheckoutSdkAdapter {
       body: JSON.stringify({ checkoutId: this.checkoutId, consignmentId, optionId }),
     });
 
-    if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
+    const data: SelectShippingResponse = await res.json();
+
+    if (!res.ok || data.error) {
       throw new Error(data.error ?? `Select shipping failed [${res.status}]`);
     }
+
+    return data.session ?? null;
   }
 
   async updateBillingAddress(addr: AddressInput): Promise<void> {

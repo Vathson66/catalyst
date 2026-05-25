@@ -432,7 +432,7 @@ function resolveHostedCheckoutFlowConfig(): HostedCheckoutFlowConfig {
 
 const HOSTED_CHECKOUT_FLOW_CONFIG = resolveHostedCheckoutFlowConfig();
 
-export function CheckoutClient({ session, initialLoan }: Props) {
+export function CheckoutClient({ session: initialSession, initialLoan }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const locale = useLocale();
@@ -440,6 +440,7 @@ export function CheckoutClient({ session, initialLoan }: Props) {
   // Detect by checking if the first path segment matches the locale code.
   const firstSegment = pathname.split('/')[1];
   const localePrefix = firstSegment === locale ? `/${locale}` : '';
+  const [session, setSession] = useState(initialSession);
 
   // Multi-step flow
   const [step, setStep] = useState<Step>('guest');
@@ -1081,7 +1082,11 @@ export function CheckoutClient({ session, initialLoan }: Props) {
         }
 
         if (shippingOptionId) {
-          await sdk.selectShippingOption(shippingOptionId);
+          const nextSession = await sdk.selectShippingOption(shippingOptionId);
+
+          if (nextSession) {
+            setSession(nextSession);
+          }
         }
 
         const billing = sameAsShipping ? shippingAddr : billingAddr;
@@ -1165,6 +1170,14 @@ export function CheckoutClient({ session, initialLoan }: Props) {
 
   const shippingAddressSummary = formatAddressSummary(shippingAddr);
   const selectedShippingOption = shippingOptions.find((option) => option.id === selectedShipping);
+  const summarySession = applyShippingOptionQuote(session, selectedShippingOption);
+  const summaryLoan: LoanState = {
+    appliedLoan: initialLoan.appliedLoan,
+    residual:
+      initialLoan.appliedLoan > 0
+        ? Math.max(summarySession.grandTotal - initialLoan.appliedLoan, 0)
+        : summarySession.grandTotal,
+  };
   const shippingMethodSummary = selectedShippingOption
     ? selectedShippingOption.description
     : shippingConfirmed
@@ -1518,7 +1531,7 @@ export function CheckoutClient({ session, initialLoan }: Props) {
           </section>
 
           <aside className="order-summary-rail">
-            <OrderSummaryCard session={session} loan={initialLoan} fmt={fmt} />
+            <OrderSummaryCard session={summarySession} loan={summaryLoan} fmt={fmt} />
           </aside>
         </div>
       </main>
@@ -1807,7 +1820,7 @@ export function CheckoutClient({ session, initialLoan }: Props) {
           </section>
 
           <aside className="order-summary-rail">
-            <OrderSummaryCard session={session} loan={initialLoan} fmt={fmt} />
+            <OrderSummaryCard session={summarySession} loan={summaryLoan} fmt={fmt} />
           </aside>
         </form>
       </main>
@@ -1819,7 +1832,7 @@ export function CheckoutClient({ session, initialLoan }: Props) {
   if (step === 'payment') {
     return (
       <PaymentStep
-        session={session}
+        session={summarySession}
         email={shippingAddr.email || guestEmail}
         name={`${shippingAddr.firstName} ${shippingAddr.lastName}`.trim()}
         city={shippingAddr.city}
@@ -2809,6 +2822,28 @@ function inferMethodKind(m: SdkPaymentMethod): 'manual' | 'card' | 'wallet' | 'o
 
 function isManualMethod(m: SdkPaymentMethod): boolean {
   return inferMethodKind(m) === 'manual';
+}
+
+function applyShippingOptionQuote(
+  session: CheckoutSession,
+  shippingOption?: SdkShippingOption,
+): CheckoutSession {
+  if (!shippingOption) {
+    return session;
+  }
+
+  const shippingDelta = shippingOption.cost - session.shipping;
+
+  if (Math.abs(shippingDelta) < 0.005) {
+    return session;
+  }
+
+  return {
+    ...session,
+    shipping: shippingOption.cost,
+    grandTotal: Math.max(session.grandTotal + shippingDelta, 0),
+    outstandingBalance: Math.max(session.outstandingBalance + shippingDelta, 0),
+  };
 }
 
 interface HostedCheckoutLaunchOptions {

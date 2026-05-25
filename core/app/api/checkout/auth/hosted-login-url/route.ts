@@ -213,6 +213,13 @@ async function resolveTrustedCheckoutUrl(checkoutUrl: URL, checkoutId?: string):
   }
 
   if (checkoutId && isValidCheckoutId(checkoutId)) {
+    if (isBigCommerceManagedCheckoutHost(checkoutHost)) {
+      // The cart redirect URL is already minted by our checkout-url route.
+      // Avoid calling redirect_urls again here because BC can rotate the
+      // one-time loader URL and strand the shopper back on cart.php.
+      return checkoutUrl;
+    }
+
     const verifiedHosts = await resolveCheckoutHostsFromBigCommerce(checkoutId);
 
     if (verifiedHosts.has(checkoutHost)) {
