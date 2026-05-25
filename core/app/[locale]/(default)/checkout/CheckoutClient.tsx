@@ -45,6 +45,7 @@ const DEFAULT_HOSTED_PAYMENT_ONLY_PARAM = 'catalyst_payment_only';
 const DEFAULT_HOSTED_CHECKOUT_URL_PARAM = 'catalyst_checkout_url';
 const DEFAULT_HOSTED_CART_URL_PARAM = 'catalyst_cart_url';
 const DEFAULT_HOSTED_RETURN_TOKEN_PARAM = 'catalyst_order_token';
+const DEFAULT_HOSTED_HANDOFF_TOKEN_PARAM = 'catalyst_handoff';
 const DEFAULT_HOSTED_PAYMENT_METHOD_ID_PARAM = 'catalyst_payment_method_id';
 const DEFAULT_HOSTED_PAYMENT_GATEWAY_ID_PARAM = 'catalyst_payment_gateway_id';
 const DEFAULT_HOSTED_PAYMENT_METHOD_TYPE_PARAM = 'catalyst_payment_method_type';
@@ -366,6 +367,7 @@ interface Props {
 interface HostedCheckoutFlowConfig {
   enabled: boolean;
   paymentOnlyMode: boolean;
+  handoffTokenParam: string;
   returnUrlParam: string;
   paymentOnlyParam: string;
   checkoutUrlParam: string;
@@ -413,6 +415,10 @@ function resolveHostedCheckoutFlowConfig(): HostedCheckoutFlowConfig {
     paymentOnlyMode: parseBooleanValue(
       process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_PAYMENT_ONLY_MODE,
       DEFAULT_HOSTED_PAYMENT_ONLY_MODE,
+    ),
+    handoffTokenParam: sanitizeQueryParamName(
+      process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_HANDOFF_TOKEN_PARAM,
+      DEFAULT_HOSTED_HANDOFF_TOKEN_PARAM,
     ),
     returnUrlParam: sanitizeQueryParamName(
       process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_RETURN_URL_PARAM,
@@ -1141,11 +1147,14 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
             currency: session.currencyCode,
             returnToken,
           };
+          const handoffToken = await resolveHostedCheckoutHandoffToken(
+            buildHostedCheckoutHandoffTokenRequest(launchOptions, session.checkoutId),
+          );
           const checkoutUrl = await resolveHostedCheckoutUrl(
             session.checkoutId,
-            buildHostedCheckoutQueryParams(launchOptions),
+            buildHostedCheckoutQueryParams(handoffToken),
           );
-          const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, launchOptions);
+          const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, handoffToken);
           const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
 
           window.location.assign(hostedLaunchUrl);
@@ -2438,11 +2447,14 @@ function PaymentStep({
       returnToken,
       paymentMethod,
     };
+    const handoffToken = await resolveHostedCheckoutHandoffToken(
+      buildHostedCheckoutHandoffTokenRequest(launchOptions, session.checkoutId),
+    );
     const checkoutUrl = await resolveHostedCheckoutUrl(
       session.checkoutId,
-      buildHostedCheckoutQueryParams(launchOptions),
+      buildHostedCheckoutQueryParams(handoffToken),
     );
-    const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, launchOptions);
+    const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, handoffToken);
     const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
 
     window.location.assign(hostedLaunchUrl);
@@ -2878,6 +2890,17 @@ interface HostedCheckoutLaunchOptions {
   paymentMethod?: SdkPaymentMethod;
 }
 
+interface HostedCheckoutHandoffTokenRequest {
+  cartUrl: string;
+  checkoutId: string;
+  checkoutUrl: string;
+  paymentGatewayId?: string;
+  paymentMethodId?: string;
+  paymentMethodType?: string;
+  paymentOnly: boolean;
+  returnUrl: string;
+}
+
 interface CheckoutReturnTokenRequest {
   checkoutId: string;
   email?: string;
@@ -2917,45 +2940,37 @@ function resolveHostedReturnUrl({
 
 function buildHostedCheckoutLaunchUrl(
   checkoutUrl: string,
-  options: HostedCheckoutLaunchOptions,
+  handoffToken: string,
 ): string {
   const target = new URL(checkoutUrl);
-  const queryParams = buildHostedCheckoutQueryParams(options);
-
-  for (const [key, value] of Object.entries(queryParams)) {
-    target.searchParams.set(key, value);
-  }
+  target.searchParams.set(HOSTED_CHECKOUT_FLOW_CONFIG.handoffTokenParam, handoffToken);
 
   return target.toString();
 }
 
-function buildHostedCheckoutQueryParams(options: HostedCheckoutLaunchOptions): HostedCheckoutQueryParams {
-  const returnUrl = resolveHostedReturnUrl(options);
-  const catalystCheckoutUrl = new URL(`${options.localePrefix}/checkout`, window.location.origin);
-  const catalystCartUrl = new URL(`${options.localePrefix}/cart`, window.location.origin);
-  const queryParams: HostedCheckoutQueryParams = {
-    [HOSTED_CHECKOUT_FLOW_CONFIG.returnUrlParam]: returnUrl,
-    [HOSTED_CHECKOUT_FLOW_CONFIG.checkoutUrlParam]: catalystCheckoutUrl.toString(),
-    [HOSTED_CHECKOUT_FLOW_CONFIG.cartUrlParam]: catalystCartUrl.toString(),
+function buildHostedCheckoutHandoffTokenRequest(
+  options: HostedCheckoutLaunchOptions,
+  checkoutId: string,
+): HostedCheckoutHandoffTokenRequest {
+  const paymentMethodType =
+    options.paymentMethod?.method || HOSTED_CHECKOUT_FLOW_CONFIG.defaultPaymentMethodType;
+
+  return {
+    checkoutId,
+    paymentOnly: HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyMode,
+    returnUrl: resolveHostedReturnUrl(options),
+    checkoutUrl: new URL(`${options.localePrefix}/checkout`, window.location.origin).toString(),
+    cartUrl: new URL(`${options.localePrefix}/cart`, window.location.origin).toString(),
+    paymentMethodId: options.paymentMethod?.id,
+    paymentGatewayId: options.paymentMethod?.gateway,
+    paymentMethodType: paymentMethodType || undefined,
   };
+}
 
-  if (HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyMode) {
-    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyParam] = '1';
-  }
-
-  if (options.paymentMethod) {
-    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentMethodIdParam] = options.paymentMethod.id;
-    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentMethodTypeParam] = options.paymentMethod.method;
-
-    if (options.paymentMethod.gateway) {
-      queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentGatewayIdParam] = options.paymentMethod.gateway;
-    }
-  } else if (HOSTED_CHECKOUT_FLOW_CONFIG.defaultPaymentMethodType) {
-    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentMethodTypeParam] =
-      HOSTED_CHECKOUT_FLOW_CONFIG.defaultPaymentMethodType;
-  }
-
-  return queryParams;
+function buildHostedCheckoutQueryParams(handoffToken: string): HostedCheckoutQueryParams {
+  return {
+    [HOSTED_CHECKOUT_FLOW_CONFIG.handoffTokenParam]: handoffToken,
+  };
 }
 
 interface HostedCheckoutUrlResponse {
@@ -2972,6 +2987,11 @@ interface HostedLaunchUrlResponse {
 }
 
 interface CheckoutReturnTokenResponse {
+  token?: string;
+  error?: string;
+}
+
+interface HostedCheckoutHandoffTokenResponse {
   token?: string;
   error?: string;
 }
@@ -2996,6 +3016,27 @@ async function resolveCheckoutReturnToken({
 
   throw new Error(
     payload.error ?? `Could not prepare secure checkout return [${res.status}].`,
+  );
+}
+
+async function resolveHostedCheckoutHandoffToken(
+  request: HostedCheckoutHandoffTokenRequest,
+): Promise<string> {
+  const res = await fetch('/api/checkout/hosted-handoff-token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+  const payload = (await res.json()) as HostedCheckoutHandoffTokenResponse;
+
+  if (res.ok && payload.token) {
+    return payload.token;
+  }
+
+  throw new Error(
+    payload.error ?? `Could not prepare secure hosted checkout handoff [${res.status}].`,
   );
 }
 
