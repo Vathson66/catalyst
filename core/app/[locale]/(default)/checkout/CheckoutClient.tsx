@@ -1084,10 +1084,6 @@ export function CheckoutClient({ session, initialLoan }: Props) {
           await sdk.selectShippingOption(shippingOptionId);
         }
 
-        const hostedCheckoutUrlPromise = HOSTED_CHECKOUT_FLOW_CONFIG.enabled
-          ? resolveHostedCheckoutUrl(session.checkoutId)
-          : null;
-
         const billing = sameAsShipping ? shippingAddr : billingAddr;
         await sdk.updateBillingAddress({
           firstName: billing.firstName,
@@ -1106,20 +1102,22 @@ export function CheckoutClient({ session, initialLoan }: Props) {
           setRedirectingToHostedCheckout(true);
           redirectingToHostedCheckoutRef.current = true;
 
-          const checkoutUrl = hostedCheckoutUrlPromise
-            ? await hostedCheckoutUrlPromise
-            : await resolveHostedCheckoutUrl(session.checkoutId);
           const returnToken = await resolveCheckoutReturnToken({
             checkoutId: session.checkoutId,
             email: shippingAddr.email || guestEmail,
             currency: session.currencyCode,
           });
-          const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, {
+          const launchOptions = {
             localePrefix,
             email: shippingAddr.email || guestEmail,
             currency: session.currencyCode,
             returnToken,
-          });
+          };
+          const checkoutUrl = await resolveHostedCheckoutUrl(
+            session.checkoutId,
+            buildHostedCheckoutQueryParams(launchOptions),
+          );
+          const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, launchOptions);
           const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
 
           window.location.assign(hostedLaunchUrl);
@@ -2392,18 +2390,22 @@ function PaymentStep({
   }, [session.checkoutId]);
 
   const redirectToHostedCheckout = useCallback(async () => {
-    const checkoutUrl = await resolveHostedCheckoutUrl(session.checkoutId);
     const returnToken = await resolveCheckoutReturnToken({
       checkoutId: session.checkoutId,
       email,
       currency: session.currencyCode,
     });
-    const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, {
+    const launchOptions = {
       localePrefix,
       email,
       currency: session.currencyCode,
       returnToken,
-    });
+    };
+    const checkoutUrl = await resolveHostedCheckoutUrl(
+      session.checkoutId,
+      buildHostedCheckoutQueryParams(launchOptions),
+    );
+    const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, launchOptions);
     const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
 
     window.location.assign(hostedLaunchUrl);
@@ -2822,6 +2824,8 @@ interface CheckoutReturnTokenRequest {
   currency?: string;
 }
 
+type HostedCheckoutQueryParams = Record<string, string>;
+
 function resolveHostedReturnUrl({
   localePrefix,
   email,
@@ -2856,25 +2860,32 @@ function buildHostedCheckoutLaunchUrl(
   options: HostedCheckoutLaunchOptions,
 ): string {
   const target = new URL(checkoutUrl);
-  const returnUrl = resolveHostedReturnUrl(options);
-  const catalystCheckoutUrl = new URL(`${options.localePrefix}/checkout`, window.location.origin);
-  const catalystCartUrl = new URL(`${options.localePrefix}/cart`, window.location.origin);
+  const queryParams = buildHostedCheckoutQueryParams(options);
 
-  target.searchParams.set(HOSTED_CHECKOUT_FLOW_CONFIG.returnUrlParam, returnUrl);
-  target.searchParams.set(
-    HOSTED_CHECKOUT_FLOW_CONFIG.checkoutUrlParam,
-    catalystCheckoutUrl.toString(),
-  );
-  target.searchParams.set(
-    HOSTED_CHECKOUT_FLOW_CONFIG.cartUrlParam,
-    catalystCartUrl.toString(),
-  );
-
-  if (HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyMode) {
-    target.searchParams.set(HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyParam, '1');
+  for (const [key, value] of Object.entries(queryParams)) {
+    target.searchParams.set(key, value);
   }
 
   return target.toString();
+}
+
+function buildHostedCheckoutQueryParams(
+  options: HostedCheckoutLaunchOptions,
+): HostedCheckoutQueryParams {
+  const returnUrl = resolveHostedReturnUrl(options);
+  const catalystCheckoutUrl = new URL(`${options.localePrefix}/checkout`, window.location.origin);
+  const catalystCartUrl = new URL(`${options.localePrefix}/cart`, window.location.origin);
+  const queryParams: HostedCheckoutQueryParams = {
+    [HOSTED_CHECKOUT_FLOW_CONFIG.returnUrlParam]: returnUrl,
+    [HOSTED_CHECKOUT_FLOW_CONFIG.checkoutUrlParam]: catalystCheckoutUrl.toString(),
+    [HOSTED_CHECKOUT_FLOW_CONFIG.cartUrlParam]: catalystCartUrl.toString(),
+  };
+
+  if (HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyMode) {
+    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyParam] = '1';
+  }
+
+  return queryParams;
 }
 
 interface HostedCheckoutUrlResponse {
@@ -2918,14 +2929,21 @@ async function resolveCheckoutReturnToken({
   );
 }
 
-async function resolveHostedCheckoutUrl(checkoutId: string): Promise<string> {
+async function resolveHostedCheckoutUrl(
+  checkoutId: string,
+  queryParams?: HostedCheckoutQueryParams,
+): Promise<string> {
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= HOSTED_CHECKOUT_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const res = await fetch(
-        `/api/checkout/checkout-url?checkoutId=${encodeURIComponent(checkoutId)}`,
-      );
+      const res = await fetch('/api/checkout/checkout-url', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ checkoutId, queryParams }),
+      });
       const payload = await parseHostedCheckoutResponse(res);
 
       if (res.ok && payload.checkoutUrl) {
