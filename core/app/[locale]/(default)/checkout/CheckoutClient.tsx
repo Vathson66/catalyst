@@ -49,11 +49,11 @@ const DEFAULT_HOSTED_HANDOFF_TOKEN_PARAM = 'catalyst_handoff';
 const DEFAULT_HOSTED_PAYMENT_METHOD_ID_PARAM = 'catalyst_payment_method_id';
 const DEFAULT_HOSTED_PAYMENT_GATEWAY_ID_PARAM = 'catalyst_payment_gateway_id';
 const DEFAULT_HOSTED_PAYMENT_METHOD_TYPE_PARAM = 'catalyst_payment_method_type';
-const DEFAULT_HOSTED_DEFAULT_PAYMENT_METHOD_TYPE = 'credit-card';
 const DEFAULT_HOSTED_RETURN_SOURCE = 'hosted-checkout';
 const HOSTED_CHECKOUT_EDIT_SOURCE = 'hosted-checkout-edit';
 const CHECKOUT_DRAFT_STORAGE_KEY_PREFIX = 'co-checkout-draft-v1';
 const CHECKOUT_DRAFT_STORAGE_TTL_MS = 48 * 60 * 60 * 1000;
+const CUSTOMER_LOOKUP_DEBOUNCE_MS = 250;
 
 const EMPTY_CHECKOUT_ADDRESS: CheckoutAddress = {
   firstName: '',
@@ -376,7 +376,6 @@ interface HostedCheckoutFlowConfig {
   paymentMethodIdParam: string;
   paymentGatewayIdParam: string;
   paymentMethodTypeParam: string;
-  defaultPaymentMethodType?: string;
   returnUrlOverride?: string;
 }
 
@@ -452,9 +451,6 @@ function resolveHostedCheckoutFlowConfig(): HostedCheckoutFlowConfig {
       process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_PAYMENT_METHOD_TYPE_PARAM,
       DEFAULT_HOSTED_PAYMENT_METHOD_TYPE_PARAM,
     ),
-    defaultPaymentMethodType:
-      process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_DEFAULT_PAYMENT_METHOD_TYPE?.trim() ||
-      DEFAULT_HOSTED_DEFAULT_PAYMENT_METHOD_TYPE,
     returnUrlOverride: returnUrlOverride || undefined,
   };
 }
@@ -515,6 +511,8 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
   const [redirectingToHostedCheckout, setRedirectingToHostedCheckout] = useState(false);
   const redirectingToHostedCheckoutRef = useRef(false);
   const sessionCustomerBootstrapRef = useRef(false);
+  const customerLookupAbortRef = useRef<AbortController | null>(null);
+  const customerLookupSequenceRef = useRef(0);
 
   // UI state
   const [error, setError] = useState<string | null>(null);
@@ -755,23 +753,35 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
   const fmt = (n: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: session.currencyCode }).format(n);
 
-  /** Check if email has a BC account on blur */
-  const handleEmailBlur = useCallback(async () => {
-    if (!guestEmail || !guestEmail.includes('@')) return;
-    if (signedInCustomer) return;
+  const handleEmailLookup = useCallback(async (rawEmail?: string): Promise<boolean> => {
+    const normalizedEmail = rawEmail?.trim().toLowerCase() ?? '';
+
+    if (!normalizedEmail || !normalizedEmail.includes('@') || signedInCustomer) {
+      return false;
+    }
+
+    const requestId = customerLookupSequenceRef.current + 1;
+    customerLookupSequenceRef.current = requestId;
+    customerLookupAbortRef.current?.abort();
+
+    const controller = new AbortController();
+    customerLookupAbortRef.current = controller;
+
     setLookupStatus('checking');
+
     try {
       const res = await fetch('/api/checkout/auth/customer-lookup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: guestEmail }),
+        body: JSON.stringify({ email: normalizedEmail }),
+        signal: controller.signal,
       });
-      const data = (await res.json()) as {
-        found: boolean;
-        customerId?: number;
-        firstName?: string;
-        lastName?: string;
-      };
+      const data = (await res.json()) as CustomerLookupResponse;
+
+      if (customerLookupSequenceRef.current !== requestId) {
+        return false;
+      }
+
       if (data.found && data.customerId) {
         setFoundCustomer({
           customerId: data.customerId,
@@ -780,28 +790,70 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
         });
         setLookupStatus('found');
         setShowSignIn(true);
-      } else {
-        setFoundCustomer(null);
-        setLookupStatus('not-found');
+
+        return true;
       }
+
+      setFoundCustomer(null);
+      setLookupStatus('not-found');
+
+      return false;
     } catch {
-      setLookupStatus('idle');
+      if (!controller.signal.aborted) {
+        setLookupStatus('idle');
+      }
+
+      return false;
     }
-  }, [guestEmail, signedInCustomer]);
+  }, [signedInCustomer]);
 
-  // ── Guest flow ──────────────────────────────────────────────────────────
-
-  const handleContinueAsGuest = useCallback(() => {
-    if (!guestEmail) {
-      setError('Please enter your email address');
+  useEffect(() => {
+    if (!guestEmail || !guestEmail.includes('@') || signedInCustomer) {
       return;
     }
+
+    const timeoutId = window.setTimeout(() => {
+      void handleEmailLookup(guestEmail);
+    }, CUSTOMER_LOOKUP_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [guestEmail, handleEmailLookup, signedInCustomer]);
+
+  useEffect(() => () => {
+    customerLookupAbortRef.current?.abort();
+  }, []);
+
+  const proceedAsGuest = useCallback(() => {
     setShippingAddr((prev) => ({ ...prev, email: guestEmail }));
     setFoundCustomer(null);
     setSignedInCustomer(null);
     setError(null);
     setStep('shipping');
   }, [guestEmail]);
+
+  /** Check if email has a BC account on blur */
+  const handleEmailBlur = useCallback(async () => {
+    await handleEmailLookup(guestEmail);
+  }, [guestEmail, handleEmailLookup]);
+
+  // ── Guest flow ──────────────────────────────────────────────────────────
+
+  const handleContinueAsGuest = useCallback(async () => {
+    if (!guestEmail) {
+      setError('Please enter your email address');
+      return;
+    }
+
+    if (await handleEmailLookup(guestEmail)) {
+      setError(null);
+
+      return;
+    }
+
+    proceedAsGuest();
+  }, [guestEmail, handleEmailLookup, proceedAsGuest]);
 
   const handleSignIn = useCallback(async () => {
     if (!guestEmail || !guestEmail.includes('@')) {
@@ -1458,9 +1510,9 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                   >
                     {signingIn ? 'Signing in…' : `Sign in as ${foundCustomer.firstName} →`}
                   </button>
-                  <button type="button" className="cta-btn-ghost" onClick={handleContinueAsGuest}>
-                    Continue as guest instead
-                  </button>
+                    <button type="button" className="cta-btn-ghost" onClick={proceedAsGuest}>
+                      Continue as guest instead
+                    </button>
                 </div>
               ) : lookupStatus === 'not-found' ? (
                 <>
@@ -2952,9 +3004,6 @@ function buildHostedCheckoutHandoffTokenRequest(
   options: HostedCheckoutLaunchOptions,
   checkoutId: string,
 ): HostedCheckoutHandoffTokenRequest {
-  const paymentMethodType =
-    options.paymentMethod?.method || HOSTED_CHECKOUT_FLOW_CONFIG.defaultPaymentMethodType;
-
   return {
     checkoutId,
     paymentOnly: HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyMode,
@@ -2963,7 +3012,7 @@ function buildHostedCheckoutHandoffTokenRequest(
     cartUrl: new URL(`${options.localePrefix}/cart`, window.location.origin).toString(),
     paymentMethodId: options.paymentMethod?.id,
     paymentGatewayId: options.paymentMethod?.gateway,
-    paymentMethodType: paymentMethodType || undefined,
+    paymentMethodType: options.paymentMethod?.method || undefined,
   };
 }
 
@@ -2994,6 +3043,13 @@ interface CheckoutReturnTokenResponse {
 interface HostedCheckoutHandoffTokenResponse {
   token?: string;
   error?: string;
+}
+
+interface CustomerLookupResponse {
+  found: boolean;
+  customerId?: number;
+  firstName?: string;
+  lastName?: string;
 }
 
 async function resolveCheckoutReturnToken({
