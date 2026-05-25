@@ -45,6 +45,10 @@ const DEFAULT_HOSTED_PAYMENT_ONLY_PARAM = 'catalyst_payment_only';
 const DEFAULT_HOSTED_CHECKOUT_URL_PARAM = 'catalyst_checkout_url';
 const DEFAULT_HOSTED_CART_URL_PARAM = 'catalyst_cart_url';
 const DEFAULT_HOSTED_RETURN_TOKEN_PARAM = 'catalyst_order_token';
+const DEFAULT_HOSTED_PAYMENT_METHOD_ID_PARAM = 'catalyst_payment_method_id';
+const DEFAULT_HOSTED_PAYMENT_GATEWAY_ID_PARAM = 'catalyst_payment_gateway_id';
+const DEFAULT_HOSTED_PAYMENT_METHOD_TYPE_PARAM = 'catalyst_payment_method_type';
+const DEFAULT_HOSTED_DEFAULT_PAYMENT_METHOD_TYPE = 'credit-card';
 const DEFAULT_HOSTED_RETURN_SOURCE = 'hosted-checkout';
 const HOSTED_CHECKOUT_EDIT_SOURCE = 'hosted-checkout-edit';
 const CHECKOUT_DRAFT_STORAGE_KEY_PREFIX = 'co-checkout-draft-v1';
@@ -367,6 +371,10 @@ interface HostedCheckoutFlowConfig {
   checkoutUrlParam: string;
   cartUrlParam: string;
   returnTokenParam: string;
+  paymentMethodIdParam: string;
+  paymentGatewayIdParam: string;
+  paymentMethodTypeParam: string;
+  defaultPaymentMethodType?: string;
   returnUrlOverride?: string;
 }
 
@@ -426,6 +434,21 @@ function resolveHostedCheckoutFlowConfig(): HostedCheckoutFlowConfig {
       process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_RETURN_TOKEN_PARAM,
       DEFAULT_HOSTED_RETURN_TOKEN_PARAM,
     ),
+    paymentMethodIdParam: sanitizeQueryParamName(
+      process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_PAYMENT_METHOD_ID_PARAM,
+      DEFAULT_HOSTED_PAYMENT_METHOD_ID_PARAM,
+    ),
+    paymentGatewayIdParam: sanitizeQueryParamName(
+      process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_PAYMENT_GATEWAY_ID_PARAM,
+      DEFAULT_HOSTED_PAYMENT_GATEWAY_ID_PARAM,
+    ),
+    paymentMethodTypeParam: sanitizeQueryParamName(
+      process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_PAYMENT_METHOD_TYPE_PARAM,
+      DEFAULT_HOSTED_PAYMENT_METHOD_TYPE_PARAM,
+    ),
+    defaultPaymentMethodType:
+      process.env.NEXT_PUBLIC_CHECKOUT_HOSTED_DEFAULT_PAYMENT_METHOD_TYPE?.trim() ||
+      DEFAULT_HOSTED_DEFAULT_PAYMENT_METHOD_TYPE,
     returnUrlOverride: returnUrlOverride || undefined,
   };
 }
@@ -2402,7 +2425,7 @@ function PaymentStep({
     };
   }, [session.checkoutId]);
 
-  const redirectToHostedCheckout = useCallback(async () => {
+  const redirectToHostedCheckout = useCallback(async (paymentMethod?: SdkPaymentMethod) => {
     const returnToken = await resolveCheckoutReturnToken({
       checkoutId: session.checkoutId,
       email,
@@ -2413,6 +2436,7 @@ function PaymentStep({
       email,
       currency: session.currencyCode,
       returnToken,
+      paymentMethod,
     };
     const checkoutUrl = await resolveHostedCheckoutUrl(
       session.checkoutId,
@@ -2495,7 +2519,7 @@ function PaymentStep({
           return;
         }
 
-        await redirectToHostedCheckout();
+        await redirectToHostedCheckout(selectedMethod);
         return;
       } catch (err) {
         setError(
@@ -2851,6 +2875,7 @@ interface HostedCheckoutLaunchOptions {
   email?: string;
   currency?: string;
   returnToken?: string;
+  paymentMethod?: SdkPaymentMethod;
 }
 
 interface CheckoutReturnTokenRequest {
@@ -2904,9 +2929,7 @@ function buildHostedCheckoutLaunchUrl(
   return target.toString();
 }
 
-function buildHostedCheckoutQueryParams(
-  options: HostedCheckoutLaunchOptions,
-): HostedCheckoutQueryParams {
+function buildHostedCheckoutQueryParams(options: HostedCheckoutLaunchOptions): HostedCheckoutQueryParams {
   const returnUrl = resolveHostedReturnUrl(options);
   const catalystCheckoutUrl = new URL(`${options.localePrefix}/checkout`, window.location.origin);
   const catalystCartUrl = new URL(`${options.localePrefix}/cart`, window.location.origin);
@@ -2918,6 +2941,18 @@ function buildHostedCheckoutQueryParams(
 
   if (HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyMode) {
     queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyParam] = '1';
+  }
+
+  if (options.paymentMethod) {
+    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentMethodIdParam] = options.paymentMethod.id;
+    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentMethodTypeParam] = options.paymentMethod.method;
+
+    if (options.paymentMethod.gateway) {
+      queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentGatewayIdParam] = options.paymentMethod.gateway;
+    }
+  } else if (HOSTED_CHECKOUT_FLOW_CONFIG.defaultPaymentMethodType) {
+    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentMethodTypeParam] =
+      HOSTED_CHECKOUT_FLOW_CONFIG.defaultPaymentMethodType;
   }
 
   return queryParams;

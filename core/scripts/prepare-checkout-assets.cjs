@@ -5,6 +5,12 @@ const { spawnSync } = require('node:child_process');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CHECKOUT_JS_DIR = path.join(REPO_ROOT, 'checkout-js');
 const CHECKOUT_JS_DIST_DIR = path.join(CHECKOUT_JS_DIR, 'dist');
+const CHECKOUT_JS_TEST_REPORT_DIR = path.join(
+  CHECKOUT_JS_DIR,
+  'packages',
+  'test-framework',
+  'report',
+);
 const CORE_PUBLIC_DIR = path.join(REPO_ROOT, 'core', 'public');
 const TARGET_DIR = path.join(CORE_PUBLIC_DIR, 'checkout-js');
 const STABLE_AUTO_LOADER_FILE = 'auto-loader.js';
@@ -53,6 +59,11 @@ function ensureStableAutoLoader(directory, autoLoaderFiles) {
   return STABLE_AUTO_LOADER_FILE;
 }
 
+function cleanCheckoutJsBuildOutput() {
+  fs.rmSync(CHECKOUT_JS_DIST_DIR, { recursive: true, force: true });
+  fs.rmSync(CHECKOUT_JS_TEST_REPORT_DIR, { recursive: true, force: true });
+}
+
 function ensureCheckoutJsBuild() {
   if (!fs.existsSync(CHECKOUT_JS_DIR)) {
     throw new Error(`checkout-js directory not found at ${CHECKOUT_JS_DIR}`);
@@ -74,7 +85,8 @@ function ensureCheckoutJsBuild() {
   }
 
   console.log('[checkout-assets] Building checkout-js dist output.');
-  runCommand('npm', ['run', 'build'], CHECKOUT_JS_DIR);
+  cleanCheckoutJsBuildOutput();
+  runCommand('npm', ['--ignore-scripts', 'run', 'build'], CHECKOUT_JS_DIR);
 
   if (getAutoLoaderFiles(CHECKOUT_JS_DIST_DIR).length === 0) {
     throw new Error(
