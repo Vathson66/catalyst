@@ -1442,6 +1442,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
             <RealExpressWallets
               checkoutId={session.checkoutId}
               currencyCode={session.currencyCode}
+              storeUrl={session.storeUrl}
               onError={setError}
               onInteraction={() => {
                 setError(null);

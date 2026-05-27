@@ -69,6 +69,7 @@ export interface ExpressCheckoutSyncPayload {
 interface RealExpressWalletsProps {
   checkoutId: string;
   currencyCode: string;
+  storeUrl?: string;
   disabled?: boolean;
   onError(message: string | null): void;
   onInteraction?(methodId: string): void;
@@ -325,6 +326,7 @@ function buildCustomerInitializeOptions(
 export function RealExpressWallets({
   checkoutId,
   currencyCode,
+  storeUrl,
   disabled = false,
   onError,
   onInteraction,
@@ -336,8 +338,30 @@ export function RealExpressWallets({
   const [loading, setLoading] = useState(true);
 
   const visibleMethods = useMemo(() => selectVisibleWalletMethods(methodIds), [methodIds]);
+  const canInitializeWallets = useMemo(() => {
+    if (!storeUrl || typeof window === 'undefined') {
+      return false;
+    }
+
+    try {
+      const storefrontHost = new URL(storeUrl).host.toLowerCase();
+      const currentHost = window.location.host.toLowerCase();
+
+      return storefrontHost === currentHost;
+    } catch {
+      return false;
+    }
+  }, [storeUrl]);
 
   useEffect(() => {
+    if (!canInitializeWallets) {
+      setMethodIds([]);
+      setLoading(false);
+      onError(null);
+
+      return;
+    }
+
     const service = serviceRef.current ?? createCheckoutService();
     serviceRef.current = service;
 
@@ -417,12 +441,12 @@ export function RealExpressWallets({
       mounted = false;
       unsubscribe();
     };
-  }, [checkoutId, onError, onSync]);
+  }, [canInitializeWallets, checkoutId, onError, onSync]);
 
   useEffect(() => {
     const service = serviceRef.current;
 
-    if (!service || visibleMethods.length === 0 || disabled) {
+    if (!canInitializeWallets || !service || visibleMethods.length === 0 || disabled) {
       return;
     }
 
@@ -480,9 +504,9 @@ export function RealExpressWallets({
 
       initializedMethodIdsRef.current = [];
     };
-  }, [checkoutId, disabled, onError, onInteraction, visibleMethods]);
+  }, [canInitializeWallets, checkoutId, disabled, onError, onInteraction, visibleMethods]);
 
-  if (!loading && visibleMethods.length === 0) {
+  if (!canInitializeWallets || (!loading && visibleMethods.length === 0)) {
     return null;
   }
 
