@@ -1200,12 +1200,14 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
             currency: session.currencyCode,
             returnToken,
           };
-          const handoffToken = await resolveHostedCheckoutHandoffToken(
-            buildHostedCheckoutHandoffTokenRequest(launchOptions, session.checkoutId),
+          const handoffRequest = buildHostedCheckoutHandoffTokenRequest(
+            launchOptions,
+            session.checkoutId,
           );
+          const handoffToken = await resolveHostedCheckoutHandoffToken(handoffRequest);
           const checkoutUrl = await resolveHostedCheckoutUrl(
             session.checkoutId,
-            buildHostedCheckoutQueryParams(handoffToken),
+            buildHostedCheckoutQueryParams(handoffToken, handoffRequest),
           );
           const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, handoffToken);
           const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
@@ -1305,12 +1307,14 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
           paymentMethod,
           paymentOnly: false,
         };
-        const handoffToken = await resolveHostedCheckoutHandoffToken(
-          buildHostedCheckoutHandoffTokenRequest(launchOptions, session.checkoutId),
+        const handoffRequest = buildHostedCheckoutHandoffTokenRequest(
+          launchOptions,
+          session.checkoutId,
         );
+        const handoffToken = await resolveHostedCheckoutHandoffToken(handoffRequest);
         const checkoutUrl = await resolveHostedCheckoutUrl(
           session.checkoutId,
-          buildHostedCheckoutQueryParams(handoffToken),
+          buildHostedCheckoutQueryParams(handoffToken, handoffRequest),
         );
         const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, handoffToken);
         const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
@@ -2532,12 +2536,14 @@ function PaymentStep({
       returnToken,
       paymentMethod,
     };
-    const handoffToken = await resolveHostedCheckoutHandoffToken(
-      buildHostedCheckoutHandoffTokenRequest(launchOptions, session.checkoutId),
+    const handoffRequest = buildHostedCheckoutHandoffTokenRequest(
+      launchOptions,
+      session.checkoutId,
     );
+    const handoffToken = await resolveHostedCheckoutHandoffToken(handoffRequest);
     const checkoutUrl = await resolveHostedCheckoutUrl(
       session.checkoutId,
-      buildHostedCheckoutQueryParams(handoffToken),
+      buildHostedCheckoutQueryParams(handoffToken, handoffRequest),
     );
     const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, handoffToken);
     const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
@@ -3050,10 +3056,28 @@ function buildHostedCheckoutHandoffTokenRequest(
   };
 }
 
-function buildHostedCheckoutQueryParams(handoffToken: string): HostedCheckoutQueryParams {
-  return {
+function buildHostedCheckoutQueryParams(
+  handoffToken: string,
+  request: HostedCheckoutHandoffTokenRequest,
+): HostedCheckoutQueryParams {
+  const queryParams: HostedCheckoutQueryParams = {
     [HOSTED_CHECKOUT_FLOW_CONFIG.handoffTokenParam]: handoffToken,
+    [HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyParam]: request.paymentOnly ? '1' : '0',
   };
+
+  if (request.paymentMethodId) {
+    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentMethodIdParam] = request.paymentMethodId;
+  }
+
+  if (request.paymentGatewayId) {
+    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentGatewayIdParam] = request.paymentGatewayId;
+  }
+
+  if (request.paymentMethodType) {
+    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentMethodTypeParam] = request.paymentMethodType;
+  }
+
+  return queryParams;
 }
 
 interface HostedCheckoutUrlResponse {
