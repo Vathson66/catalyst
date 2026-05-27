@@ -1207,9 +1207,13 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
           const handoffToken = await resolveHostedCheckoutHandoffToken(handoffRequest);
           const checkoutUrl = await resolveHostedCheckoutUrl(
             session.checkoutId,
-            buildHostedCheckoutQueryParams(handoffToken, handoffRequest),
+            buildHostedCheckoutQueryParams(handoffToken),
           );
-          const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, handoffToken);
+          const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(
+            checkoutUrl,
+            handoffToken,
+            handoffRequest,
+          );
           const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
 
           window.location.assign(hostedLaunchUrl);
@@ -1314,9 +1318,13 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
         const handoffToken = await resolveHostedCheckoutHandoffToken(handoffRequest);
         const checkoutUrl = await resolveHostedCheckoutUrl(
           session.checkoutId,
-          buildHostedCheckoutQueryParams(handoffToken, handoffRequest),
+          buildHostedCheckoutQueryParams(handoffToken),
         );
-        const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, handoffToken);
+        const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(
+          checkoutUrl,
+          handoffToken,
+          handoffRequest,
+        );
         const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
 
         window.location.assign(hostedLaunchUrl);
@@ -2543,9 +2551,13 @@ function PaymentStep({
     const handoffToken = await resolveHostedCheckoutHandoffToken(handoffRequest);
     const checkoutUrl = await resolveHostedCheckoutUrl(
       session.checkoutId,
-      buildHostedCheckoutQueryParams(handoffToken, handoffRequest),
+      buildHostedCheckoutQueryParams(handoffToken),
     );
-    const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, handoffToken);
+    const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(
+      checkoutUrl,
+      handoffToken,
+      handoffRequest,
+    );
     const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
 
     window.location.assign(hostedLaunchUrl);
@@ -3033,9 +3045,35 @@ function resolveHostedReturnUrl({
 function buildHostedCheckoutLaunchUrl(
   checkoutUrl: string,
   handoffToken: string,
+  request: HostedCheckoutHandoffTokenRequest,
 ): string {
   const target = new URL(checkoutUrl);
   target.searchParams.set(HOSTED_CHECKOUT_FLOW_CONFIG.handoffTokenParam, handoffToken);
+  target.searchParams.set(
+    HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyParam,
+    request.paymentOnly ? '1' : '0',
+  );
+
+  if (request.paymentMethodId) {
+    target.searchParams.set(
+      HOSTED_CHECKOUT_FLOW_CONFIG.paymentMethodIdParam,
+      request.paymentMethodId,
+    );
+  }
+
+  if (request.paymentGatewayId) {
+    target.searchParams.set(
+      HOSTED_CHECKOUT_FLOW_CONFIG.paymentGatewayIdParam,
+      request.paymentGatewayId,
+    );
+  }
+
+  if (request.paymentMethodType) {
+    target.searchParams.set(
+      HOSTED_CHECKOUT_FLOW_CONFIG.paymentMethodTypeParam,
+      request.paymentMethodType,
+    );
+  }
 
   return target.toString();
 }
@@ -3056,28 +3094,8 @@ function buildHostedCheckoutHandoffTokenRequest(
   };
 }
 
-function buildHostedCheckoutQueryParams(
-  handoffToken: string,
-  request: HostedCheckoutHandoffTokenRequest,
-): HostedCheckoutQueryParams {
-  const queryParams: HostedCheckoutQueryParams = {
-    [HOSTED_CHECKOUT_FLOW_CONFIG.handoffTokenParam]: handoffToken,
-    [HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyParam]: request.paymentOnly ? '1' : '0',
-  };
-
-  if (request.paymentMethodId) {
-    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentMethodIdParam] = request.paymentMethodId;
-  }
-
-  if (request.paymentGatewayId) {
-    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentGatewayIdParam] = request.paymentGatewayId;
-  }
-
-  if (request.paymentMethodType) {
-    queryParams[HOSTED_CHECKOUT_FLOW_CONFIG.paymentMethodTypeParam] = request.paymentMethodType;
-  }
-
-  return queryParams;
+function buildHostedCheckoutQueryParams(_handoffToken: string): HostedCheckoutQueryParams {
+  return {};
 }
 
 interface HostedCheckoutUrlResponse {
