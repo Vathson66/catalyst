@@ -174,6 +174,33 @@ function toNumber(value: string | number | undefined): number {
   return 0;
 }
 
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function resolveOrderTotals(order: z.infer<typeof BcOrderSchema>) {
+  const subtotalExTax = toNumber(order.subtotal_ex_tax);
+  const subtotalIncTax = toNumber(order.subtotal_inc_tax);
+  const shippingExTax = toNumber(order.base_shipping_cost);
+  const shippingIncTax = toNumber(order.shipping_cost_inc_tax);
+  const discount = toNumber(order.discount_amount) + toNumber(order.coupon_discount);
+  const total = toNumber(order.total_inc_tax);
+  const explicitTax = toNumber(order.tax_total);
+
+  const subtotal = subtotalExTax || subtotalIncTax;
+  const shipping = shippingExTax || shippingIncTax;
+  const derivedTax = roundMoney(Math.max(total - subtotal - shipping + discount, 0));
+  const tax = explicitTax > 0 ? explicitTax : derivedTax;
+
+  return {
+    subtotal,
+    discount,
+    shipping,
+    tax,
+    total,
+  };
+}
+
 function normalizeAddress(address: BcOrderAddress | undefined): OrderConfirmationAddress {
   return {
     firstName: address?.first_name,
@@ -241,6 +268,7 @@ export async function fetchOrderConfirmationDetails(
       [],
     ),
   ]);
+  const totals = resolveOrderTotals(order);
 
   return {
     id: order.id,
@@ -257,7 +285,7 @@ export async function fetchOrderConfirmationDetails(
       address: normalizeAddress(address),
       itemsTotal: address.items_total,
       itemsShipped: address.items_shipped,
-      cost: toNumber(address.cost_inc_tax ?? address.base_cost),
+      cost: toNumber(address.base_cost ?? address.cost_inc_tax),
     })),
     lineItems: products.map((product) => ({
       id: String(product.id),
@@ -276,13 +304,7 @@ export async function fetchOrderConfirmationDetails(
           }))
           .filter((option) => option.label || option.value) ?? [],
     })),
-    totals: {
-      subtotal: toNumber(order.subtotal_inc_tax ?? order.subtotal_ex_tax),
-      discount: toNumber(order.discount_amount) + toNumber(order.coupon_discount),
-      shipping: toNumber(order.shipping_cost_inc_tax ?? order.base_shipping_cost),
-      tax: toNumber(order.tax_total),
-      total: toNumber(order.total_inc_tax),
-    },
+    totals,
     payment: {
       method: order.payment_method,
       providerId: order.payment_provider_id,
