@@ -4,6 +4,11 @@ import { useLocale } from 'next-intl';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import {
+  RealExpressWallets,
+  type ExpressCheckoutAddressSnapshot,
+  type ExpressCheckoutSyncPayload,
+} from './RealExpressWallets';
 import { CheckoutSdkAdapter } from '~/lib/checkout/sdk-adapter';
 import type { SdkPaymentMethod, SdkShippingOption } from '~/lib/checkout/sdk-adapter';
 import type { CheckoutSession } from '~/lib/checkout/types';
@@ -240,6 +245,19 @@ function hasRequiredBillingAddressFields(address: CheckoutAddress): boolean {
       address.city &&
       address.state &&
       address.postalCode,
+  );
+}
+
+function areAddressesEquivalent(left: CheckoutAddress, right: CheckoutAddress): boolean {
+  return (
+    left.firstName.trim() === right.firstName.trim() &&
+    left.lastName.trim() === right.lastName.trim() &&
+    left.address1.trim() === right.address1.trim() &&
+    left.address2.trim() === right.address2.trim() &&
+    left.city.trim() === right.city.trim() &&
+    left.state.trim() === right.state.trim() &&
+    left.postalCode.trim() === right.postalCode.trim() &&
+    left.country.trim() === right.country.trim()
   );
 }
 
@@ -1284,6 +1302,119 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
     ? Boolean(shippingAddressSummary)
     : hasRequiredBillingAddressFields(billingAddr);
 
+  const mapExpressCheckoutAddress = useCallback(
+    (source?: ExpressCheckoutAddressSnapshot): CheckoutAddress | null => {
+      if (!source) {
+        return null;
+      }
+
+      return {
+        firstName: source.firstName ?? '',
+        lastName: source.lastName ?? '',
+        email: source.email ?? '',
+        phone: source.phone ?? '',
+        address1: source.address1 ?? '',
+        address2: source.address2 ?? '',
+        city: source.city ?? '',
+        state: source.state ?? '',
+        postalCode: source.postalCode ?? '',
+        country: source.country ?? 'US',
+      };
+    },
+    [],
+  );
+
+  const handleExpressCheckoutSync = useCallback(
+    (payload: ExpressCheckoutSyncPayload) => {
+      const nextEmail = payload.guestEmail?.trim() || '';
+      const nextShippingAddr = mapExpressCheckoutAddress(payload.shippingAddress);
+      const nextBillingAddr = mapExpressCheckoutAddress(payload.billingAddress);
+
+      if (nextEmail) {
+        setGuestEmail((prev) => prev || nextEmail);
+      }
+
+      if (payload.totals) {
+        setSession((prev) => ({
+          ...prev,
+          subtotal: payload.totals?.subtotal ?? prev.subtotal,
+          shipping: payload.totals?.shipping ?? prev.shipping,
+          tax: payload.totals?.tax ?? prev.tax,
+          grandTotal: payload.totals?.grandTotal ?? prev.grandTotal,
+          outstandingBalance: payload.totals?.outstandingBalance ?? prev.outstandingBalance,
+          customer: {
+            ...prev.customer,
+            email: nextEmail || prev.customer.email,
+          },
+        }));
+      }
+
+      if (nextShippingAddr) {
+        setShippingAddr((prev) => ({
+          ...prev,
+          ...nextShippingAddr,
+          email: nextShippingAddr.email || nextEmail || prev.email,
+        }));
+      } else if (nextEmail) {
+        setShippingAddr((prev) => ({
+          ...prev,
+          email: prev.email || nextEmail,
+        }));
+      }
+
+      if (nextBillingAddr) {
+        setBillingAddr((prev) => ({
+          ...prev,
+          ...nextBillingAddr,
+          email: nextBillingAddr.email || nextEmail || prev.email,
+        }));
+      } else if (nextEmail) {
+        setBillingAddr((prev) => ({
+          ...prev,
+          email: prev.email || nextEmail,
+        }));
+      }
+
+      if (nextShippingAddr && nextBillingAddr) {
+        setSameAsShipping(areAddressesEquivalent(nextShippingAddr, nextBillingAddr));
+      }
+
+      if (payload.shippingOptions) {
+        setShippingOptions(
+          payload.shippingOptions.map((option) => ({
+            id: option.id,
+            description: option.description,
+            cost: option.cost,
+            transitTime: option.transitTime,
+            isRecommended: option.isRecommended,
+          })),
+        );
+      }
+
+      if (payload.selectedShippingOptionId) {
+        setSelectedShipping(payload.selectedShippingOptionId);
+        setShippingConfirmed(true);
+      } else if (payload.shippingOptions && payload.shippingOptions.length > 0) {
+        setShippingConfirmed(true);
+      }
+
+      if (nextShippingAddr) {
+        const hasShippingFields = hasRequiredShippingAddressFields(nextShippingAddr);
+        const hasSelectedShipping = Boolean(payload.selectedShippingOptionId);
+        const hasBillingFields = nextBillingAddr
+          ? hasRequiredBillingAddressFields(nextBillingAddr)
+          : sameAsShipping && hasShippingFields;
+
+        if (hasShippingFields && hasSelectedShipping && hasBillingFields) {
+          setStep('payment');
+        } else if (hasShippingFields) {
+          setStep('shipping');
+        }
+      }
+    },
+    [mapExpressCheckoutAddress, sameAsShipping],
+  );
+
   // ── STEP: Guest ──────────────────────────────────────────────────
 
   if (step === 'guest') {
@@ -1308,30 +1439,15 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
 
         <div className="checkout-grid">
           <section className="checkout-main">
-            <div className="card section-gap">
-              <p className="section-label">Express checkout</p>
-
-              <div className="express-row">
-                <button type="button" className="express-btn express-btn-apple" aria-label="Express checkout with Apple Pay">
-                  <ApplePayLogo />
-                </button>
-                <button type="button" className="express-btn express-btn-google" aria-label="Express checkout with Google Pay">
-                  <GooglePayLogo />
-                </button>
-                <button type="button" className="express-btn express-btn-paypal" aria-label="Express checkout with PayPal">
-                  <PayPalLogo />
-                </button>
-                <button type="button" className="express-btn express-btn-amazon" aria-label="Express checkout with Amazon Pay">
-                  <AmazonPayLogo />
-                </button>
-              </div>
-
-              <div className="divider-row">
-                <span className="divider-line" />
-                <span className="divider-text">or continue with details below</span>
-                <span className="divider-line" />
-              </div>
-            </div>
+            <RealExpressWallets
+              checkoutId={session.checkoutId}
+              currencyCode={session.currencyCode}
+              onError={setError}
+              onInteraction={() => {
+                setError(null);
+              }}
+              onSync={handleExpressCheckoutSync}
+            />
 
             <div className="card section-gap">
               <p className="section-label">Contact</p>
