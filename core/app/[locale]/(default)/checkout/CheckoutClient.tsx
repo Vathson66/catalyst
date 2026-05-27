@@ -4,11 +4,7 @@ import { useLocale } from 'next-intl';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import {
-  RealExpressWallets,
-  type ExpressCheckoutAddressSnapshot,
-  type ExpressCheckoutSyncPayload,
-} from './RealExpressWallets';
+import { HostedExpressWallets } from './HostedExpressWallets';
 import { CheckoutSdkAdapter } from '~/lib/checkout/sdk-adapter';
 import type { SdkPaymentMethod, SdkShippingOption } from '~/lib/checkout/sdk-adapter';
 import type { CheckoutSession } from '~/lib/checkout/types';
@@ -245,19 +241,6 @@ function hasRequiredBillingAddressFields(address: CheckoutAddress): boolean {
       address.city &&
       address.state &&
       address.postalCode,
-  );
-}
-
-function areAddressesEquivalent(left: CheckoutAddress, right: CheckoutAddress): boolean {
-  return (
-    left.firstName.trim() === right.firstName.trim() &&
-    left.lastName.trim() === right.lastName.trim() &&
-    left.address1.trim() === right.address1.trim() &&
-    left.address2.trim() === right.address2.trim() &&
-    left.city.trim() === right.city.trim() &&
-    left.state.trim() === right.state.trim() &&
-    left.postalCode.trim() === right.postalCode.trim() &&
-    left.country.trim() === right.country.trim()
   );
 }
 
@@ -1302,117 +1285,54 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
     ? Boolean(shippingAddressSummary)
     : hasRequiredBillingAddressFields(billingAddr);
 
-  const mapExpressCheckoutAddress = useCallback(
-    (source?: ExpressCheckoutAddressSnapshot): CheckoutAddress | null => {
-      if (!source) {
-        return null;
-      }
+  const launchHostedExpressCheckout = useCallback(
+    async (paymentMethod: SdkPaymentMethod) => {
+      setError(null);
+      setRedirectingToHostedCheckout(true);
+      redirectingToHostedCheckoutRef.current = true;
 
-      return {
-        firstName: source.firstName ?? '',
-        lastName: source.lastName ?? '',
-        email: source.email ?? '',
-        phone: source.phone ?? '',
-        address1: source.address1 ?? '',
-        address2: source.address2 ?? '',
-        city: source.city ?? '',
-        state: source.state ?? '',
-        postalCode: source.postalCode ?? '',
-        country: source.country ?? 'US',
-      };
-    },
-    [],
-  );
+      try {
+        const returnToken = await resolveCheckoutReturnToken({
+          checkoutId: session.checkoutId,
+          email: guestEmail || session.customer.email,
+          currency: session.currencyCode,
+        });
+        const launchOptions = {
+          localePrefix,
+          email: guestEmail || session.customer.email,
+          currency: session.currencyCode,
+          returnToken,
+          paymentMethod,
+          paymentOnly: false,
+        };
+        const handoffToken = await resolveHostedCheckoutHandoffToken(
+          buildHostedCheckoutHandoffTokenRequest(launchOptions, session.checkoutId),
+        );
+        const checkoutUrl = await resolveHostedCheckoutUrl(
+          session.checkoutId,
+          buildHostedCheckoutQueryParams(handoffToken),
+        );
+        const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(checkoutUrl, handoffToken);
+        const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
 
-  const handleExpressCheckoutSync = useCallback(
-    (payload: ExpressCheckoutSyncPayload) => {
-      const nextEmail = payload.guestEmail?.trim() || '';
-      const nextShippingAddr = mapExpressCheckoutAddress(payload.shippingAddress);
-      const nextBillingAddr = mapExpressCheckoutAddress(payload.billingAddress);
-
-      if (nextEmail) {
-        setGuestEmail((prev) => prev || nextEmail);
-      }
-
-      if (payload.totals) {
-        setSession((prev) => ({
-          ...prev,
-          subtotal: payload.totals?.subtotal ?? prev.subtotal,
-          shipping: payload.totals?.shipping ?? prev.shipping,
-          tax: payload.totals?.tax ?? prev.tax,
-          grandTotal: payload.totals?.grandTotal ?? prev.grandTotal,
-          outstandingBalance: payload.totals?.outstandingBalance ?? prev.outstandingBalance,
-          customer: {
-            ...prev.customer,
-            email: nextEmail || prev.customer.email,
-          },
-        }));
-      }
-
-      if (nextShippingAddr) {
-        setShippingAddr((prev) => ({
-          ...prev,
-          ...nextShippingAddr,
-          email: nextShippingAddr.email || nextEmail || prev.email,
-        }));
-      } else if (nextEmail) {
-        setShippingAddr((prev) => ({
-          ...prev,
-          email: prev.email || nextEmail,
-        }));
-      }
-
-      if (nextBillingAddr) {
-        setBillingAddr((prev) => ({
-          ...prev,
-          ...nextBillingAddr,
-          email: nextBillingAddr.email || nextEmail || prev.email,
-        }));
-      } else if (nextEmail) {
-        setBillingAddr((prev) => ({
-          ...prev,
-          email: prev.email || nextEmail,
-        }));
-      }
-
-      if (nextShippingAddr && nextBillingAddr) {
-        setSameAsShipping(areAddressesEquivalent(nextShippingAddr, nextBillingAddr));
-      }
-
-      if (payload.shippingOptions) {
-        setShippingOptions(
-          payload.shippingOptions.map((option) => ({
-            id: option.id,
-            description: option.description,
-            cost: option.cost,
-            transitTime: option.transitTime,
-            isRecommended: option.isRecommended,
-          })),
+        window.location.assign(hostedLaunchUrl);
+      } catch (err) {
+        redirectingToHostedCheckoutRef.current = false;
+        setRedirectingToHostedCheckout(false);
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Could not launch express checkout. Please try again.',
         );
       }
-
-      if (payload.selectedShippingOptionId) {
-        setSelectedShipping(payload.selectedShippingOptionId);
-        setShippingConfirmed(true);
-      } else if (payload.shippingOptions && payload.shippingOptions.length > 0) {
-        setShippingConfirmed(true);
-      }
-
-      if (nextShippingAddr) {
-        const hasShippingFields = hasRequiredShippingAddressFields(nextShippingAddr);
-        const hasSelectedShipping = Boolean(payload.selectedShippingOptionId);
-        const hasBillingFields = nextBillingAddr
-          ? hasRequiredBillingAddressFields(nextBillingAddr)
-          : sameAsShipping && hasShippingFields;
-
-        if (hasShippingFields && hasSelectedShipping && hasBillingFields) {
-          setStep('payment');
-        } else if (hasShippingFields) {
-          setStep('shipping');
-        }
-      }
     },
-    [mapExpressCheckoutAddress, sameAsShipping],
+    [
+      guestEmail,
+      localePrefix,
+      session.checkoutId,
+      session.currencyCode,
+      session.customer.email,
+    ],
   );
 
   // ── STEP: Guest ──────────────────────────────────────────────────
@@ -1439,15 +1359,11 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
 
         <div className="checkout-grid">
           <section className="checkout-main">
-            <RealExpressWallets
+            <HostedExpressWallets
               checkoutId={session.checkoutId}
-              currencyCode={session.currencyCode}
-              storeUrl={session.storeUrl}
+              disabled={redirectingToHostedCheckout}
               onError={setError}
-              onInteraction={() => {
-                setError(null);
-              }}
-              onSync={handleExpressCheckoutSync}
+              onLaunch={launchHostedExpressCheckout}
             />
 
             <div className="card section-gap">
@@ -3057,6 +2973,7 @@ interface HostedCheckoutLaunchOptions {
   currency?: string;
   returnToken?: string;
   paymentMethod?: SdkPaymentMethod;
+  paymentOnly?: boolean;
 }
 
 interface HostedCheckoutHandoffTokenRequest {
@@ -3123,7 +3040,7 @@ function buildHostedCheckoutHandoffTokenRequest(
 ): HostedCheckoutHandoffTokenRequest {
   return {
     checkoutId,
-    paymentOnly: HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyMode,
+    paymentOnly: options.paymentOnly ?? HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyMode,
     returnUrl: resolveHostedReturnUrl(options),
     checkoutUrl: new URL(`${options.localePrefix}/checkout`, window.location.origin).toString(),
     cartUrl: new URL(`${options.localePrefix}/cart`, window.location.origin).toString(),

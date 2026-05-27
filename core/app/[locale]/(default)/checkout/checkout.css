@@ -173,6 +173,32 @@
   min-height: 48px;
 }
 
+.checkout-shell .express-wallet-launch {
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.checkout-shell .express-wallet-launch:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.checkout-shell .express-wallet-launch-applepay {
+  background: #000;
+  color: #fff;
+}
+
+.checkout-shell .express-wallet-launch-googlepay,
+.checkout-shell .express-wallet-launch-paypal {
+  background: #fff;
+}
+
 .checkout-shell .express-wallet-slot-skeleton {
   background:
     linear-gradient(90deg, rgba(15, 23, 42, 0.05) 0%, rgba(15, 23, 42, 0.11) 50%, rgba(15, 23, 42, 0.05) 100%);
