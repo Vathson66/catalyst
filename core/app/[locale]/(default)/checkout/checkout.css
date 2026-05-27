@@ -1118,10 +1118,18 @@
 .checkout-shell .confirmation-care-card {
   border-color: #d7e5f5;
   background: #f7fbff;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .checkout-shell .confirmation-care-card h2 {
   margin: 6px 0 8px;
+}
+
+.checkout-shell .confirmation-care-card a {
+  margin-top: 8px;
+  align-self: flex-start;
 }
 
 /* ── Checkboxes ─────────────────────────────────────────────────────────── */

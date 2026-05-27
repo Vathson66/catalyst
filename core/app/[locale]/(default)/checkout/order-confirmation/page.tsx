@@ -24,7 +24,7 @@ interface UpsellOffer {
 const DEFAULT_RETURN_TOKEN_PARAM = 'catalyst_order_token';
 const TIMELINE_STEPS = [
   { label: 'Order placed', note: 'Complete', active: true },
-  { label: 'Payment verified', note: 'Usually within a few minutes', active: false },
+  { label: 'Order review', note: 'Receipt and confirmation details are ready', active: false },
   {
     label: 'Fulfillment begins',
     note: 'Warehouse and service teams prepare the order',
@@ -91,6 +91,22 @@ function formatAddress(address: OrderConfirmationDetails['billingAddress']): str
 
 function itemInitial(item: OrderConfirmationLineItem): string {
   return item.name.trim().charAt(0).toUpperCase() || 'P';
+}
+
+function resolveShippingTotal(order: OrderConfirmationDetails): number {
+  const destinationCosts = order.shippingDestinations
+    .map((destination) => destination.cost ?? 0)
+    .filter((value) => Number.isFinite(value) && value >= 0);
+
+  if (destinationCosts.length > 0) {
+    const totalDestinationCost = destinationCosts.reduce((sum, value) => sum + value, 0);
+
+    if (totalDestinationCost > 0 || order.totals.shipping === 0) {
+      return totalDestinationCost;
+    }
+  }
+
+  return order.totals.shipping;
 }
 
 function buildUpsellOffers(order?: OrderConfirmationDetails): UpsellOffer[] {
@@ -165,6 +181,7 @@ export default async function OrderConfirmationPage({ searchParams }: Props) {
   const email = order?.billingAddress.email ?? readParam(params, 'email');
   const offers = buildUpsellOffers(order ?? undefined);
   const orderedAt = order ? formatDate(order.orderedAt) : formatDate();
+  const displayedShippingTotal = order ? resolveShippingTotal(order) : 0;
 
   return (
     <div className="checkout-shell">
@@ -280,7 +297,7 @@ export default async function OrderConfirmationPage({ searchParams }: Props) {
             {order ? (
               <>
                 <section className="confirmation-panel">
-                  <p className="section-label">Payment summary</p>
+                  <p className="section-label">Order summary</p>
                   <div className="confirmation-total-row">
                     <span>Subtotal</span>
                     <strong>{formatMoney(order.currencyCode, order.totals.subtotal)}</strong>
@@ -293,7 +310,7 @@ export default async function OrderConfirmationPage({ searchParams }: Props) {
                   ) : null}
                   <div className="confirmation-total-row">
                     <span>Shipping</span>
-                    <strong>{formatMoney(order.currencyCode, order.totals.shipping)}</strong>
+                    <strong>{formatMoney(order.currencyCode, displayedShippingTotal)}</strong>
                   </div>
                   <div className="confirmation-total-row">
                     <span>Tax</span>
