@@ -12,6 +12,11 @@ interface HostedExpressWalletsProps {
 }
 
 const EXPRESS_METHOD_ORDER = ['applepay', 'googlepay', 'paypal'] as const;
+const DEFAULT_EXPRESS_METHODS: SdkPaymentMethod[] = [
+  { id: 'applepay', method: 'applepay', name: 'Apple Pay', kind: 'wallet' },
+  { id: 'googlepay', method: 'googlepay', name: 'Google Pay', kind: 'wallet' },
+  { id: 'paypalcommerce', method: 'paypal', name: 'PayPal', kind: 'online' },
+];
 
 function isSupportedExpressMethod(method: SdkPaymentMethod): boolean {
   return (
@@ -92,21 +97,19 @@ export function HostedExpressWallets({
           error?: string;
         };
 
-        if (!res.ok) {
-          throw new Error(payload.error ?? 'Could not load express checkout options.');
-        }
-
         if (!cancelled) {
-          setMethods(payload.methods ?? []);
+          if (res.ok) {
+            setMethods(payload.methods ?? []);
+          } else {
+            setMethods(DEFAULT_EXPRESS_METHODS);
+          }
           onError(null);
         }
       } catch (error) {
         if (!cancelled) {
-          onError(
-            error instanceof Error
-              ? error.message
-              : 'Could not load express checkout options.',
-          );
+          console.warn('[HostedExpressWallets] Falling back to default express methods.', error);
+          setMethods(DEFAULT_EXPRESS_METHODS);
+          onError(null);
         }
       } finally {
         if (!cancelled) {
