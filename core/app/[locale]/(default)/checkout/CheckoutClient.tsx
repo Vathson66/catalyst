@@ -4,7 +4,6 @@ import { useLocale } from 'next-intl';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { HostedExpressWallets } from './HostedExpressWallets';
 import { CheckoutSdkAdapter } from '~/lib/checkout/sdk-adapter';
 import type { SdkPaymentMethod, SdkShippingOption } from '~/lib/checkout/sdk-adapter';
 import type { CheckoutSession } from '~/lib/checkout/types';
@@ -1291,62 +1290,6 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
     ? Boolean(shippingAddressSummary)
     : hasRequiredBillingAddressFields(billingAddr);
 
-  const launchHostedExpressCheckout = useCallback(
-    async (paymentMethod: SdkPaymentMethod) => {
-      setError(null);
-      setRedirectingToHostedCheckout(true);
-      redirectingToHostedCheckoutRef.current = true;
-
-      try {
-        const returnToken = await resolveCheckoutReturnToken({
-          checkoutId: session.checkoutId,
-          email: guestEmail || session.customer.email,
-          currency: session.currencyCode,
-        });
-        const launchOptions = {
-          localePrefix,
-          email: guestEmail || session.customer.email,
-          currency: session.currencyCode,
-          returnToken,
-          paymentMethod,
-          paymentOnly: false,
-        };
-        const handoffRequest = buildHostedCheckoutHandoffTokenRequest(
-          launchOptions,
-          session.checkoutId,
-        );
-        const handoffToken = await resolveHostedCheckoutHandoffToken(handoffRequest);
-        const checkoutUrl = await resolveHostedCheckoutUrl(
-          session.checkoutId,
-          buildHostedCheckoutQueryParams(handoffToken),
-        );
-        const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(
-          checkoutUrl,
-          handoffToken,
-          handoffRequest,
-        );
-        const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
-
-        window.location.assign(hostedLaunchUrl);
-      } catch (err) {
-        redirectingToHostedCheckoutRef.current = false;
-        setRedirectingToHostedCheckout(false);
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Could not launch express checkout. Please try again.',
-        );
-      }
-    },
-    [
-      guestEmail,
-      localePrefix,
-      session.checkoutId,
-      session.currencyCode,
-      session.customer.email,
-    ],
-  );
-
   // ── STEP: Guest ──────────────────────────────────────────────────
 
   if (step === 'guest') {
@@ -1371,13 +1314,6 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
 
         <div className="checkout-grid">
           <section className="checkout-main">
-            <HostedExpressWallets
-              checkoutId={session.checkoutId}
-              disabled={redirectingToHostedCheckout}
-              onError={setError}
-              onLaunch={launchHostedExpressCheckout}
-            />
-
             <div className="card section-gap">
               <p className="section-label">Contact</p>
 

@@ -148,104 +148,6 @@
   font-size: 13px;
 }
 
-/* ── Express wallets ────────────────────────────────────────────────────── */
-
-.checkout-shell .express-wallets {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(172px, 1fr));
-  gap: 10px;
-}
-
-.checkout-shell .express-wallet-slot {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 50px;
-  padding: 0;
-  border: 1.5px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  overflow: hidden;
-}
-
-.checkout-shell .express-wallet-slot > div {
-  width: 100%;
-  min-height: 48px;
-}
-
-.checkout-shell .express-wallet-launch {
-  width: 100%;
-  min-height: 48px;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  font-size: 17px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.checkout-shell .express-wallet-launch:disabled {
-  cursor: wait;
-  opacity: 0.72;
-}
-
-.checkout-shell .express-wallet-launch-applepay {
-  background: #000;
-  color: #fff;
-}
-
-.checkout-shell .express-wallet-launch-googlepay,
-.checkout-shell .express-wallet-launch-paypal {
-  background: #fff;
-}
-
-.checkout-shell .express-wallet-slot-skeleton {
-  background:
-    linear-gradient(90deg, rgba(15, 23, 42, 0.05) 0%, rgba(15, 23, 42, 0.11) 50%, rgba(15, 23, 42, 0.05) 100%);
-  background-size: 200% 100%;
-  animation: express-wallet-pulse 1.1s ease-in-out infinite;
-}
-
-.checkout-shell .express-wallet-slot-amazonpay {
-  background: #ff9900;
-  border-color: #ff9900;
-}
-
-.checkout-shell .express-wallet-slot-applepay {
-  background: #000;
-  border-color: #000;
-}
-
-.checkout-shell .express-wallet-slot-googlepay,
-.checkout-shell .express-wallet-slot-paypalcommerce,
-.checkout-shell .express-wallet-slot-bigcommerce_payments,
-.checkout-shell .express-wallet-slot-braintreepaypal,
-.checkout-shell .express-wallet-slot-stripe,
-.checkout-shell .express-wallet-slot-paylater,
-.checkout-shell .express-wallet-slot-venmo {
-  background: #fff;
-}
-
-@keyframes express-wallet-pulse {
-  0% {
-    background-position: 200% 0;
-  }
-
-  100% {
-    background-position: -200% 0;
-  }
-}
-
-/* ── Divider ────────────────────────────────────────────────────────────── */
-
-.checkout-shell .divider-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.checkout-shell .divider-line { flex: 1; height: 1px; background: var(--line); }
-.checkout-shell .divider-text { font-size: 13px; color: var(--muted); white-space: nowrap; }
-
 /* ── Contact ────────────────────────────────────────────────────────────── */
 
 .checkout-shell .contact-info { margin: 0; display: flex; align-items: center; gap: 10px; }
@@ -1503,9 +1405,6 @@
   .checkout-shell .order-summary-rail {
     position: static;
   }
-  .checkout-shell .express-wallets {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .checkout-shell .checkout-history-grid {
     grid-template-columns: 1fr;
   }
@@ -1535,9 +1434,6 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
-  }
-  .checkout-shell .express-wallets {
-    grid-template-columns: 1fr;
   }
   .checkout-shell .form-row-cols {
     flex-direction: column;
