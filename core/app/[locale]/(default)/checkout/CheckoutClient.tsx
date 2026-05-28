@@ -3095,9 +3095,11 @@ function buildHostedCheckoutHandoffTokenRequest(
 }
 
 function buildHostedCheckoutQueryParams(
-  _handoffToken: string,
+  handoffToken: string,
 ): HostedCheckoutQueryParams | undefined {
-  return undefined;
+  return {
+    [HOSTED_CHECKOUT_FLOW_CONFIG.handoffTokenParam]: handoffToken,
+  };
 }
 
 interface HostedCheckoutUrlResponse {
