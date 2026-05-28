@@ -2532,33 +2532,20 @@ function PaymentStep({
   }, [session.checkoutId]);
 
   const redirectToHostedCheckout = useCallback(async (paymentMethod?: SdkPaymentMethod) => {
-    const returnToken = await resolveCheckoutReturnToken({
+    const hostedLaunchUrl = await resolveHostedCheckoutLaunchUrl({
       checkoutId: session.checkoutId,
-      email,
-      currency: session.currencyCode,
-    });
-    const launchOptions = {
       localePrefix,
       email,
       currency: session.currencyCode,
-      returnToken,
-      paymentMethod,
-    };
-    const handoffRequest = buildHostedCheckoutHandoffTokenRequest(
-      launchOptions,
-      session.checkoutId,
-    );
-    const handoffToken = await resolveHostedCheckoutHandoffToken(handoffRequest);
-    const checkoutUrl = await resolveHostedCheckoutUrl(
-      session.checkoutId,
-      buildHostedCheckoutQueryParams(handoffToken),
-    );
-    const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(
-      checkoutUrl,
-      handoffToken,
-      handoffRequest,
-    );
-    const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
+      paymentOnly: HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyMode,
+      paymentMethod: paymentMethod
+        ? {
+            id: paymentMethod.id,
+            gateway: paymentMethod.gateway,
+            method: paymentMethod.method,
+          }
+        : undefined,
+    });
 
     window.location.assign(hostedLaunchUrl);
   }, [email, localePrefix, session.checkoutId, session.currencyCode]);
@@ -3115,6 +3102,19 @@ interface HostedLaunchUrlResponse {
   detail?: string;
 }
 
+interface HostedLaunchUrlRequest {
+  checkoutId: string;
+  localePrefix: string;
+  email?: string;
+  currency?: string;
+  paymentOnly?: boolean;
+  paymentMethod?: {
+    id?: string;
+    gateway?: string;
+    method?: string;
+  };
+}
+
 interface CheckoutReturnTokenResponse {
   token?: string;
   error?: string;
@@ -3173,6 +3173,29 @@ async function resolveHostedCheckoutHandoffToken(
 
   throw new Error(
     payload.error ?? `Could not prepare secure hosted checkout handoff [${res.status}].`,
+  );
+}
+
+async function resolveHostedCheckoutLaunchUrl(
+  request: HostedLaunchUrlRequest,
+): Promise<string> {
+  const res = await fetch('/api/checkout/hosted-launch-url', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+  const payload = (await res.json()) as HostedLaunchUrlResponse;
+
+  if (res.ok && payload.launchUrl) {
+    return payload.launchUrl;
+  }
+
+  throw new Error(
+    payload.error ??
+      payload.detail ??
+      `Could not launch secure hosted checkout [${res.status}].`,
   );
 }
 
