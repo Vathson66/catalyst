@@ -58,7 +58,8 @@ async function requestRedirectUrl(
 ): Promise<{ res: Response; bodyText: string }> {
   let lastResponse: Response | null = null;
   let lastBody = '';
-  const body = queryParams ? { query_params: queryParams } : {};
+  const hasQueryParams = Boolean(queryParams && Object.keys(queryParams).length > 0);
+  const body = hasQueryParams ? { query_params: queryParams } : {};
 
   for (let attempt = 1; attempt <= BC_REDIRECT_MAX_ATTEMPTS; attempt += 1) {
     const controller = new AbortController();

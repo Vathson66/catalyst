@@ -3094,8 +3094,10 @@ function buildHostedCheckoutHandoffTokenRequest(
   };
 }
 
-function buildHostedCheckoutQueryParams(_handoffToken: string): HostedCheckoutQueryParams {
-  return {};
+function buildHostedCheckoutQueryParams(
+  _handoffToken: string,
+): HostedCheckoutQueryParams | undefined {
+  return undefined;
 }
 
 interface HostedCheckoutUrlResponse {
