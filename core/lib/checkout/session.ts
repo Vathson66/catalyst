@@ -6,10 +6,7 @@ export async function loadCheckoutSession(checkoutId: string): Promise<CheckoutS
   const checkout = await fetchCheckout(checkoutId);
   const customerId = checkout.cart.customer_id;
 
-  const loanApproval =
-    customerId > 0
-      ? await fetchLoanApproval(customerId)
-      : { approved: false, approvedAmount: 0 };
+  const loanApproval = await fetchLoanApproval(customerId);
 
   const allItems: OrderItem[] = [
     ...(checkout.cart.line_items?.physical_items ?? []),
@@ -66,7 +63,9 @@ export async function loadCheckoutSession(checkoutId: string): Promise<CheckoutS
       approvedAmount: loanApproval.approvedAmount,
       selected: false,
       appliedAmount: 0,
+      status: loanApproval.status,
+      loanReference: loanApproval.loanReference,
     },
-    loanEnabled: process.env.LOAN_ENABLED === 'true',
+    loanEnabled: process.env.LOAN_ENABLED === 'true' || loanApproval.source === 'seed',
   };
 }

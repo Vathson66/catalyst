@@ -36,6 +36,14 @@ interface PersistedCheckoutDraft {
   selectedShipping: string;
 }
 
+interface PersistedLoanSelection {
+  version: 1;
+  savedAt: number;
+  useLoan: boolean;
+  selectedLoanAmount: number;
+  appliedLoanAmount: number;
+}
+
 const HOSTED_CHECKOUT_RETRY_DELAY_MS = 350;
 const HOSTED_CHECKOUT_MAX_ATTEMPTS = 2;
 const DEFAULT_HOSTED_PAYMENT_FLOW_ENABLED = true;
@@ -53,6 +61,7 @@ const DEFAULT_HOSTED_RETURN_SOURCE = 'hosted-checkout';
 const HOSTED_CHECKOUT_EDIT_SOURCE = 'hosted-checkout-edit';
 const CHECKOUT_DRAFT_STORAGE_KEY_PREFIX = 'co-checkout-draft-v1';
 const CHECKOUT_DRAFT_STORAGE_TTL_MS = 48 * 60 * 60 * 1000;
+const CHECKOUT_LOAN_STORAGE_KEY_PREFIX = 'co-checkout-loan-v1';
 const CUSTOMER_LOOKUP_DEBOUNCE_MS = 250;
 
 const EMPTY_CHECKOUT_ADDRESS: CheckoutAddress = {
@@ -111,6 +120,10 @@ function readStringValue(...values: unknown[]): string {
   }
 
   return '';
+}
+
+function cx(...classes: Array<string | false | null | undefined>): string {
+  return classes.filter(Boolean).join(' ');
 }
 
 function readNumberValue(value: unknown): number | null {
@@ -213,33 +226,26 @@ function normaliseCheckoutAddress(value: unknown, fallbackEmail = ''): CheckoutA
       source.state_or_province_code,
     ),
     postalCode: readStringValue(source.postalCode, source.postal_code, source.zip),
-    country: readStringValue(
-      source.country,
-      source.countryCode,
-      source.country_code,
-      source.countryIso2,
-      source.country_iso2,
-    ) || 'US',
+    country:
+      readStringValue(
+        source.country,
+        source.countryCode,
+        source.country_code,
+        source.countryIso2,
+        source.country_iso2,
+      ) || 'US',
   };
 }
 
 function hasRequiredShippingAddressFields(address: CheckoutAddress): boolean {
   return Boolean(
-    address.firstName &&
-      address.address1 &&
-      address.city &&
-      address.state &&
-      address.postalCode,
+    address.firstName && address.address1 && address.city && address.state && address.postalCode,
   );
 }
 
 function hasRequiredBillingAddressFields(address: CheckoutAddress): boolean {
   return Boolean(
-    address.firstName &&
-      address.address1 &&
-      address.city &&
-      address.state &&
-      address.postalCode,
+    address.firstName && address.address1 && address.city && address.state && address.postalCode,
   );
 }
 
@@ -250,12 +256,7 @@ function formatDisplayName(firstName: string, lastName: string): string {
 function formatAddressSummary(address: CheckoutAddress): string {
   const cityState = [address.city.trim(), address.state.trim()].filter(Boolean).join(', ');
 
-  return [
-    address.address1.trim(),
-    address.address2.trim(),
-    cityState,
-    address.postalCode.trim(),
-  ]
+  return [address.address1.trim(), address.address2.trim(), cityState, address.postalCode.trim()]
     .filter(Boolean)
     .join(', ');
 }
@@ -286,11 +287,7 @@ function readPersistedCheckoutDraft(checkoutId: string): PersistedCheckoutDraft 
 
     const parsed = JSON.parse(raw) as Partial<PersistedCheckoutDraft>;
 
-    if (
-      parsed.version !== 1 ||
-      typeof parsed.savedAt !== 'number' ||
-      !isStepValue(parsed.step)
-    ) {
+    if (parsed.version !== 1 || typeof parsed.savedAt !== 'number' || !isStepValue(parsed.step)) {
       window.localStorage.removeItem(key);
 
       return null;
@@ -335,6 +332,86 @@ function clearPersistedCheckoutDraft(checkoutId: string): void {
     const key = resolveCheckoutDraftStorageKey(checkoutId);
 
     window.localStorage.removeItem(key);
+  } catch {
+    // no-op
+  }
+}
+
+function resolveLoanSelectionStorageKey(checkoutId: string): string {
+  return `${CHECKOUT_LOAN_STORAGE_KEY_PREFIX}:${window.location.host}:${checkoutId}`;
+}
+
+function readPersistedLoanSelection(checkoutId: string): PersistedLoanSelection | null {
+  try {
+    const raw = window.localStorage.getItem(resolveLoanSelectionStorageKey(checkoutId));
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PersistedLoanSelection>;
+
+    if (
+      parsed.version !== 1 ||
+      typeof parsed.savedAt !== 'number' ||
+      typeof parsed.useLoan !== 'boolean' ||
+      typeof parsed.selectedLoanAmount !== 'number'
+    ) {
+      window.localStorage.removeItem(resolveLoanSelectionStorageKey(checkoutId));
+
+      return null;
+    }
+
+    if (Date.now() - parsed.savedAt > CHECKOUT_DRAFT_STORAGE_TTL_MS) {
+      window.localStorage.removeItem(resolveLoanSelectionStorageKey(checkoutId));
+
+      return null;
+    }
+
+    return {
+      version: 1,
+      savedAt: parsed.savedAt,
+      useLoan: parsed.useLoan,
+      selectedLoanAmount: parsed.selectedLoanAmount,
+      appliedLoanAmount: parsed.appliedLoanAmount ?? 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedLoanSelection(checkoutId: string, selection: PersistedLoanSelection): void {
+  try {
+    window.localStorage.setItem(
+      resolveLoanSelectionStorageKey(checkoutId),
+      JSON.stringify(selection),
+    );
+  } catch {
+    // Ignore storage failures and let checkout continue without persisted loan selection.
+  }
+}
+
+function clearPersistedLoanSelection(checkoutId: string): void {
+  try {
+    window.localStorage.removeItem(resolveLoanSelectionStorageKey(checkoutId));
+  } catch {
+    // no-op
+  }
+}
+
+function sendLoanResetBeacon(checkoutId: string): void {
+  try {
+    const body = JSON.stringify({ checkoutId });
+    const blob = new Blob([body], { type: 'application/json' });
+
+    if (!navigator.sendBeacon('/api/checkout/reset-loan', blob)) {
+      void fetch('/api/checkout/reset-loan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        keepalive: true,
+      });
+    }
   } catch {
     // no-op
   }
@@ -484,7 +561,9 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
     lastName: string;
   } | null>(null);
 
-  const [lookupStatus, setLookupStatus] = useState<'idle' | 'checking' | 'found' | 'not-found'>('idle');
+  const [lookupStatus, setLookupStatus] = useState<'idle' | 'checking' | 'found' | 'not-found'>(
+    'idle',
+  );
   const [smsConsent, setSmsConsent] = useState(false);
 
   // Shipping address
@@ -570,7 +649,10 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
         requestedStep === 'payment' && !hasRequiredShippingAddressFields(hydratedShippingAddr)
           ? 'shipping'
           : requestedStep;
-    } else if (hydratedStep === 'payment' && !hasRequiredShippingAddressFields(hydratedShippingAddr)) {
+    } else if (
+      hydratedStep === 'payment' &&
+      !hasRequiredShippingAddressFields(hydratedShippingAddr)
+    ) {
       hydratedStep = 'shipping';
     }
 
@@ -753,59 +835,71 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
   const fmt = (n: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: session.currencyCode }).format(n);
 
-  const handleEmailLookup = useCallback(async (rawEmail?: string): Promise<boolean> => {
-    const normalizedEmail = rawEmail?.trim().toLowerCase() ?? '';
+  const [useLoan, setUseLoan] = useState(initialLoan.appliedLoan > 0 || session.loan.selected);
+  const [loanAmount, setLoanAmount] = useState(
+    Math.min(initialLoan.appliedLoan || session.loan.approvedAmount, session.grandTotal),
+  );
+  const [loanAppliedAmount, setLoanAppliedAmount] = useState(
+    initialLoan.appliedLoan || session.loan.appliedAmount,
+  );
+  const [loanStatus, setLoanStatus] = useState(session.loan.status);
 
-    if (!normalizedEmail || !normalizedEmail.includes('@') || signedInCustomer) {
-      return false;
-    }
+  const handleEmailLookup = useCallback(
+    async (rawEmail?: string): Promise<boolean> => {
+      const normalizedEmail = rawEmail?.trim().toLowerCase() ?? '';
 
-    const requestId = customerLookupSequenceRef.current + 1;
-    customerLookupSequenceRef.current = requestId;
-    customerLookupAbortRef.current?.abort();
-
-    const controller = new AbortController();
-    customerLookupAbortRef.current = controller;
-
-    setLookupStatus('checking');
-
-    try {
-      const res = await fetch('/api/checkout/auth/customer-lookup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: normalizedEmail }),
-        signal: controller.signal,
-      });
-      const data = (await res.json()) as CustomerLookupResponse;
-
-      if (customerLookupSequenceRef.current !== requestId) {
+      if (!normalizedEmail || !normalizedEmail.includes('@') || signedInCustomer) {
         return false;
       }
 
-      if (data.found && data.customerId) {
-        setFoundCustomer({
-          customerId: data.customerId,
-          firstName: data.firstName ?? '',
-          lastName: data.lastName ?? '',
+      const requestId = customerLookupSequenceRef.current + 1;
+      customerLookupSequenceRef.current = requestId;
+      customerLookupAbortRef.current?.abort();
+
+      const controller = new AbortController();
+      customerLookupAbortRef.current = controller;
+
+      setLookupStatus('checking');
+
+      try {
+        const res = await fetch('/api/checkout/auth/customer-lookup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: normalizedEmail }),
+          signal: controller.signal,
         });
-        setLookupStatus('found');
-        setShowSignIn(true);
+        const data = (await res.json()) as CustomerLookupResponse;
 
-        return true;
+        if (customerLookupSequenceRef.current !== requestId) {
+          return false;
+        }
+
+        if (data.found && data.customerId) {
+          setFoundCustomer({
+            customerId: data.customerId,
+            firstName: data.firstName ?? '',
+            lastName: data.lastName ?? '',
+          });
+          setLookupStatus('found');
+          setShowSignIn(true);
+
+          return true;
+        }
+
+        setFoundCustomer(null);
+        setLookupStatus('not-found');
+
+        return false;
+      } catch {
+        if (!controller.signal.aborted) {
+          setLookupStatus('idle');
+        }
+
+        return false;
       }
-
-      setFoundCustomer(null);
-      setLookupStatus('not-found');
-
-      return false;
-    } catch {
-      if (!controller.signal.aborted) {
-        setLookupStatus('idle');
-      }
-
-      return false;
-    }
-  }, [signedInCustomer]);
+    },
+    [signedInCustomer],
+  );
 
   useEffect(() => {
     if (!guestEmail || !guestEmail.includes('@') || signedInCustomer) {
@@ -821,9 +915,12 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
     };
   }, [guestEmail, handleEmailLookup, signedInCustomer]);
 
-  useEffect(() => () => {
-    customerLookupAbortRef.current?.abort();
-  }, []);
+  useEffect(
+    () => () => {
+      customerLookupAbortRef.current?.abort();
+    },
+    [],
+  );
 
   const proceedAsGuest = useCallback(() => {
     setShippingAddr((prev) => ({ ...prev, email: guestEmail }));
@@ -1162,11 +1259,20 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
           throw new Error('Please select a shipping method');
         }
 
+        let checkoutSessionForHandoff = session;
+
         if (shippingOptionId) {
           const nextSession = await sdk.selectShippingOption(shippingOptionId);
 
           if (nextSession) {
             setSession(nextSession);
+            checkoutSessionForHandoff = nextSession;
+          } else {
+            const quotedShippingOption = nextShippingOptions.find(
+              (option) => option.id === shippingOptionId,
+            );
+
+            checkoutSessionForHandoff = applyShippingOptionQuote(session, quotedShippingOption);
           }
         }
 
@@ -1187,6 +1293,48 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
         if (HOSTED_CHECKOUT_FLOW_CONFIG.enabled) {
           setRedirectingToHostedCheckout(true);
           redirectingToHostedCheckoutRef.current = true;
+
+          if (
+            useLoan &&
+            checkoutSessionForHandoff.loanEnabled &&
+            checkoutSessionForHandoff.loan.eligible
+          ) {
+            const requestedAmount = Math.min(
+              loanAmount,
+              checkoutSessionForHandoff.loan.approvedAmount,
+              checkoutSessionForHandoff.grandTotal,
+            );
+
+            if (requestedAmount > 0) {
+              const res = await fetch('/api/checkout/apply-loan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  checkoutId: checkoutSessionForHandoff.checkoutId,
+                  requestedAmount,
+                }),
+              });
+              const data = (await res.json()) as {
+                appliedAmount?: number;
+                status?: string;
+                error?: string;
+              };
+
+              if (!res.ok) {
+                throw new Error(data.error ?? 'Could not apply your loan. Please try again.');
+              }
+
+              setLoanAppliedAmount(data.appliedAmount ?? requestedAmount);
+              setLoanStatus(data.status ?? 'Under Processing');
+              writePersistedLoanSelection(checkoutSessionForHandoff.checkoutId, {
+                version: 1,
+                savedAt: Date.now(),
+                useLoan: true,
+                selectedLoanAmount: requestedAmount,
+                appliedLoanAmount: data.appliedAmount ?? requestedAmount,
+              });
+            }
+          }
 
           const returnToken = await resolveCheckoutReturnToken({
             checkoutId: session.checkoutId,
@@ -1213,7 +1361,10 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
             handoffToken,
             handoffRequest,
           );
-          const hostedLaunchUrl = await resolveHostedLaunchUrl(hostedCheckoutUrl, session.checkoutId);
+          const hostedLaunchUrl = await resolveHostedLaunchUrl(
+            hostedCheckoutUrl,
+            session.checkoutId,
+          );
 
           window.location.assign(hostedLaunchUrl);
 
@@ -1241,13 +1392,16 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
       billingAddr,
       guestEmail,
       localePrefix,
+      loanAmount,
       sameAsShipping,
       selectedShipping,
       session.checkoutId,
       session.currencyCode,
+      session,
       shippingAddr,
       shippingConfirmed,
       shippingOptions,
+      useLoan,
     ],
   );
 
@@ -1261,13 +1415,69 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
   const shippingAddressSummary = formatAddressSummary(shippingAddr);
   const selectedShippingOption = shippingOptions.find((option) => option.id === selectedShipping);
   const summarySession = applyShippingOptionQuote(session, selectedShippingOption);
+  const maxLoanAmount = Math.max(
+    0,
+    Math.min(summarySession.loan.approvedAmount, summarySession.grandTotal),
+  );
+  const selectedLoanAmount = Math.max(0, Math.min(loanAmount, maxLoanAmount));
+  const showLoanConsent =
+    summarySession.loanEnabled &&
+    summarySession.loan.eligible &&
+    (summarySession.loan.status === 'Active' || summarySession.loan.status === 'Under Processing');
+  const useLoanForSummary = showLoanConsent && useLoan && selectedLoanAmount > 0;
   const summaryLoan: LoanState = {
-    appliedLoan: initialLoan.appliedLoan,
-    residual:
-      initialLoan.appliedLoan > 0
-        ? Math.max(summarySession.grandTotal - initialLoan.appliedLoan, 0)
-        : summarySession.grandTotal,
+    appliedLoan: useLoanForSummary ? selectedLoanAmount : loanAppliedAmount,
+    residual: Math.max(
+      summarySession.grandTotal - (useLoanForSummary ? selectedLoanAmount : loanAppliedAmount),
+      0,
+    ),
   };
+
+  useEffect(() => {
+    const persistedLoan = readPersistedLoanSelection(session.checkoutId);
+
+    if (!persistedLoan || !summarySession.loan.eligible) {
+      return;
+    }
+
+    const persistedAmount = Math.min(persistedLoan.selectedLoanAmount, maxLoanAmount);
+
+    setUseLoan(persistedLoan.useLoan && persistedAmount > 0);
+    setLoanAmount(persistedAmount);
+    setLoanAppliedAmount(Math.min(persistedLoan.appliedLoanAmount, maxLoanAmount));
+  }, [maxLoanAmount, session.checkoutId, summarySession.loan.eligible]);
+
+  useEffect(() => {
+    if (!showLoanConsent) {
+      return;
+    }
+
+    writePersistedLoanSelection(session.checkoutId, {
+      version: 1,
+      savedAt: Date.now(),
+      useLoan,
+      selectedLoanAmount,
+      appliedLoanAmount: loanAppliedAmount,
+    });
+  }, [loanAppliedAmount, selectedLoanAmount, session.checkoutId, showLoanConsent, useLoan]);
+
+  useEffect(() => {
+    if (!loanAppliedAmount) {
+      return;
+    }
+
+    const handlePageHide = () => {
+      if (!redirectingToHostedCheckoutRef.current) {
+        sendLoanResetBeacon(session.checkoutId);
+      }
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, [loanAppliedAmount, session.checkoutId]);
   const shippingMethodSummary = selectedShippingOption
     ? selectedShippingOption.description
     : shippingConfirmed
@@ -1335,8 +1545,15 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                       setError(null);
                       setLookupStatus('idle');
                     }}
-                    onBlur={() => { void handleEmailBlur(); }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void handleEmailBlur(); } }}
+                    onBlur={() => {
+                      void handleEmailBlur();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void handleEmailBlur();
+                      }
+                    }}
                   />
                 </label>
               </div>
@@ -1350,7 +1567,10 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
               {signedInCustomer ? (
                 <div className="customer-welcome">
                   <span className="customer-welcome-text">
-                    Signed in as <strong>{signedInCustomer.firstName} {signedInCustomer.lastName}</strong>
+                    Signed in as{' '}
+                    <strong>
+                      {signedInCustomer.firstName} {signedInCustomer.lastName}
+                    </strong>
                     <button
                       type="button"
                       className="signin-link"
@@ -1377,14 +1597,29 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                           type="button"
                           role="radio"
                           aria-checked={selectedAddressId === a.id}
-                          className={`address-tile${selectedAddressId === a.id ? ' address-tile-selected' : ''}`}
+                          className={cx(
+                            'address-tile',
+                            selectedAddressId === a.id && 'address-tile-selected',
+                          )}
                           onClick={() => handleSelectSavedAddress(a.id)}
                         >
-                          <span className={`method-radio-circle${selectedAddressId === a.id ? ' method-radio-circle-selected' : ''}`} />
+                          <span
+                            className={cx(
+                              'method-radio-circle',
+                              selectedAddressId === a.id && 'method-radio-circle-selected',
+                            )}
+                          />
                           <span className="address-tile-text">
-                            <span className="address-tile-name">{a.firstName} {a.lastName}</span>
-                            <span className="address-tile-line">{a.address1}{a.address2 ? `, ${a.address2}` : ''}</span>
-                            <span className="address-tile-line">{a.city}, {a.state} {a.postalCode}</span>
+                            <span className="address-tile-name">
+                              {a.firstName} {a.lastName}
+                            </span>
+                            <span className="address-tile-line">
+                              {a.address1}
+                              {a.address2 ? `, ${a.address2}` : ''}
+                            </span>
+                            <span className="address-tile-line">
+                              {a.city}, {a.state} {a.postalCode}
+                            </span>
                           </span>
                         </button>
                       ))}
@@ -1392,10 +1627,19 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                         type="button"
                         role="radio"
                         aria-checked={selectedAddressId === 'new'}
-                        className={`address-tile address-tile-new${selectedAddressId === 'new' ? ' address-tile-selected' : ''}`}
+                        className={cx(
+                          'address-tile',
+                          'address-tile-new',
+                          selectedAddressId === 'new' && 'address-tile-selected',
+                        )}
                         onClick={() => handleSelectSavedAddress('new')}
                       >
-                        <span className={`method-radio-circle${selectedAddressId === 'new' ? ' method-radio-circle-selected' : ''}`} />
+                        <span
+                          className={cx(
+                            'method-radio-circle',
+                            selectedAddressId === 'new' && 'method-radio-circle-selected',
+                          )}
+                        />
                         <span className="address-tile-text">
                           <span className="address-tile-name">+ Ship to a different address</span>
                         </span>
@@ -1408,46 +1652,86 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                       <div className="form-row form-row-cols">
                         <label className="form-field">
                           <span className="field-label">First name *</span>
-                          <input className="field-input" type="text" autoComplete="given-name"
+                          <input
+                            className="field-input"
+                            type="text"
+                            autoComplete="given-name"
                             value={shippingAddr.firstName}
-                            onChange={(e) => setShippingAddr((p) => ({ ...p, firstName: e.target.value }))} />
+                            onChange={(e) =>
+                              setShippingAddr((p) => ({ ...p, firstName: e.target.value }))
+                            }
+                          />
                         </label>
                         <label className="form-field">
                           <span className="field-label">Last name *</span>
-                          <input className="field-input" type="text" autoComplete="family-name"
+                          <input
+                            className="field-input"
+                            type="text"
+                            autoComplete="family-name"
                             value={shippingAddr.lastName}
-                            onChange={(e) => setShippingAddr((p) => ({ ...p, lastName: e.target.value }))} />
+                            onChange={(e) =>
+                              setShippingAddr((p) => ({ ...p, lastName: e.target.value }))
+                            }
+                          />
                         </label>
                       </div>
                       <div className="form-row">
                         <label className="form-field form-field-full">
                           <span className="field-label">Street address *</span>
-                          <input className="field-input" type="text" autoComplete="address-line1" placeholder="123 Main St"
+                          <input
+                            className="field-input"
+                            type="text"
+                            autoComplete="address-line1"
+                            placeholder="123 Main St"
                             value={shippingAddr.address1}
-                            onChange={(e) => setShippingAddr((p) => ({ ...p, address1: e.target.value }))} />
+                            onChange={(e) =>
+                              setShippingAddr((p) => ({ ...p, address1: e.target.value }))
+                            }
+                          />
                         </label>
                       </div>
                       <div className="form-row form-row-cols">
                         <label className="form-field">
                           <span className="field-label">City *</span>
-                          <input className="field-input" type="text" autoComplete="address-level2"
+                          <input
+                            className="field-input"
+                            type="text"
+                            autoComplete="address-level2"
                             value={shippingAddr.city}
-                            onChange={(e) => setShippingAddr((p) => ({ ...p, city: e.target.value }))} />
+                            onChange={(e) =>
+                              setShippingAddr((p) => ({ ...p, city: e.target.value }))
+                            }
+                          />
                         </label>
                         <label className="form-field">
                           <span className="field-label">State *</span>
-                          <input className="field-input" type="text" autoComplete="address-level1" placeholder="CA" maxLength={2}
+                          <input
+                            className="field-input"
+                            type="text"
+                            autoComplete="address-level1"
+                            placeholder="CA"
+                            maxLength={2}
                             value={shippingAddr.state}
-                            onChange={(e) => setShippingAddr((p) => ({ ...p, state: e.target.value }))} />
+                            onChange={(e) =>
+                              setShippingAddr((p) => ({ ...p, state: e.target.value }))
+                            }
+                          />
                         </label>
                       </div>
                       <div className="form-row">
                         <label className="form-field form-field-full">
                           <span className="field-label">ZIP code *</span>
-                          <input className="field-input" type="text" autoComplete="postal-code" placeholder="90210"
+                          <input
+                            className="field-input"
+                            type="text"
+                            autoComplete="postal-code"
+                            placeholder="90210"
                             value={shippingAddr.postalCode}
-                            onChange={(e) => setShippingAddr((p) => ({ ...p, postalCode: e.target.value }))}
-                            onBlur={() => void fetchShippingOptions(shippingAddr)} />
+                            onChange={(e) =>
+                              setShippingAddr((p) => ({ ...p, postalCode: e.target.value }))
+                            }
+                            onBlur={() => void fetchShippingOptions(shippingAddr)}
+                          />
                         </label>
                       </div>
                     </div>
@@ -1476,7 +1760,10 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                         value={signInPassword}
                         onChange={(e) => setSignInPassword(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') { e.preventDefault(); void handleSignIn(); }
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            void handleSignIn();
+                          }
                         }}
                         // eslint-disable-next-line jsx-a11y/no-autofocus
                         autoFocus
@@ -1491,9 +1778,9 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                   >
                     {signingIn ? 'Signing in…' : `Sign in as ${foundCustomer.firstName} →`}
                   </button>
-                    <button type="button" className="cta-btn-ghost" onClick={proceedAsGuest}>
-                      Continue as guest instead
-                    </button>
+                  <button type="button" className="cta-btn-ghost" onClick={proceedAsGuest}>
+                    Continue as guest instead
+                  </button>
                 </div>
               ) : lookupStatus === 'not-found' ? (
                 <>
@@ -1551,7 +1838,10 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                           value={signInPassword}
                           onChange={(e) => setSignInPassword(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === 'Enter') { e.preventDefault(); void handleSignIn(); }
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              void handleSignIn();
+                            }
                           }}
                           // eslint-disable-next-line jsx-a11y/no-autofocus
                           autoFocus
@@ -1575,7 +1865,11 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                           type="button"
                           className="signin-link"
                           style={{ color: 'var(--muted)' }}
-                          onClick={() => { setShowSignIn(false); setSignInPassword(''); setError(null); }}
+                          onClick={() => {
+                            setShowSignIn(false);
+                            setSignInPassword('');
+                            setError(null);
+                          }}
                         >
                           Cancel
                         </button>
@@ -1645,7 +1939,9 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                     value={shippingAddr.firstName}
                     onChange={(e) => {
                       setShippingAddr((prev) => ({ ...prev, firstName: e.target.value }));
-                      setShippingConfirmed(false); setShippingOptions([]); setSelectedShipping('');
+                      setShippingConfirmed(false);
+                      setShippingOptions([]);
+                      setSelectedShipping('');
                     }}
                     required
                   />
@@ -1658,7 +1954,9 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                     value={shippingAddr.lastName}
                     onChange={(e) => {
                       setShippingAddr((prev) => ({ ...prev, lastName: e.target.value }));
-                      setShippingConfirmed(false); setShippingOptions([]); setSelectedShipping('');
+                      setShippingConfirmed(false);
+                      setShippingOptions([]);
+                      setSelectedShipping('');
                     }}
                     required
                   />
@@ -1675,7 +1973,9 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                     value={shippingAddr.address1}
                     onChange={(e) => {
                       setShippingAddr((prev) => ({ ...prev, address1: e.target.value }));
-                      setShippingConfirmed(false); setShippingOptions([]); setSelectedShipping('');
+                      setShippingConfirmed(false);
+                      setShippingOptions([]);
+                      setSelectedShipping('');
                     }}
                     required
                   />
@@ -1690,7 +1990,9 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                     type="text"
                     placeholder="Suite 100"
                     value={shippingAddr.address2}
-                    onChange={(e) => setShippingAddr((prev) => ({ ...prev, address2: e.target.value }))}
+                    onChange={(e) =>
+                      setShippingAddr((prev) => ({ ...prev, address2: e.target.value }))
+                    }
                   />
                 </label>
               </div>
@@ -1704,7 +2006,9 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                     value={shippingAddr.city}
                     onChange={(e) => {
                       setShippingAddr((prev) => ({ ...prev, city: e.target.value }));
-                      setShippingConfirmed(false); setShippingOptions([]); setSelectedShipping('');
+                      setShippingConfirmed(false);
+                      setShippingOptions([]);
+                      setSelectedShipping('');
                     }}
                     required
                   />
@@ -1719,7 +2023,9 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                     value={shippingAddr.state}
                     onChange={(e) => {
                       setShippingAddr((prev) => ({ ...prev, state: e.target.value }));
-                      setShippingConfirmed(false); setShippingOptions([]); setSelectedShipping('');
+                      setShippingConfirmed(false);
+                      setShippingOptions([]);
+                      setSelectedShipping('');
                     }}
                     required
                   />
@@ -1736,7 +2042,9 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                     value={shippingAddr.postalCode}
                     onChange={(e) => {
                       setShippingAddr((prev) => ({ ...prev, postalCode: e.target.value }));
-                      setShippingConfirmed(false); setShippingOptions([]); setSelectedShipping('');
+                      setShippingConfirmed(false);
+                      setShippingOptions([]);
+                      setSelectedShipping('');
                     }}
                     onBlur={() => void fetchShippingOptions(shippingAddr)}
                     required
@@ -1749,7 +2057,9 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                     type="tel"
                     placeholder="(555) 000-0000"
                     value={shippingAddr.phone}
-                    onChange={(e) => setShippingAddr((prev) => ({ ...prev, phone: e.target.value }))}
+                    onChange={(e) =>
+                      setShippingAddr((prev) => ({ ...prev, phone: e.target.value }))
+                    }
                   />
                 </label>
               </div>
@@ -1769,7 +2079,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                   if (next) setBillingAddr({ ...shippingAddr });
                 }}
               >
-                <span className={`toggle-switch${sameAsShipping ? ' toggle-switch-on' : ''}`}>
+                <span className={cx('toggle-switch', sameAsShipping && 'toggle-switch-on')}>
                   <span className="toggle-thumb" />
                 </span>
                 <span className="billing-same-label">Use shipping address for billing</span>
@@ -1786,7 +2096,10 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                       type="button"
                       role="radio"
                       aria-checked={selectedShipping === opt.id}
-                      className={`shipping-option-item${selectedShipping === opt.id ? ' shipping-option-selected' : ''}`}
+                      className={cx(
+                        'shipping-option-item',
+                        selectedShipping === opt.id && 'shipping-option-selected',
+                      )}
                       onClick={() => setSelectedShipping(opt.id)}
                     >
                       <div className="shipping-option-details">
@@ -1798,7 +2111,12 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                       <span className="shipping-option-cost">
                         {opt.cost === 0 ? 'Free' : fmt(opt.cost)}
                       </span>
-                      <span className={`method-radio-circle${selectedShipping === opt.id ? ' method-radio-circle-selected' : ''}`} />
+                      <span
+                        className={cx(
+                          'method-radio-circle',
+                          selectedShipping === opt.id && 'method-radio-circle-selected',
+                        )}
+                      />
                     </button>
                   ))}
                 </div>
@@ -1819,34 +2137,66 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                   <div className="form-row form-row-cols">
                     <label className="form-field">
                       <span className="field-label">First name *</span>
-                      <input className="field-input" type="text" value={billingAddr.firstName}
-                        onChange={(e) => setBillingAddr((p) => ({ ...p, firstName: e.target.value }))} required />
+                      <input
+                        className="field-input"
+                        type="text"
+                        value={billingAddr.firstName}
+                        onChange={(e) =>
+                          setBillingAddr((p) => ({ ...p, firstName: e.target.value }))
+                        }
+                        required
+                      />
                     </label>
                     <label className="form-field">
                       <span className="field-label">Last name *</span>
-                      <input className="field-input" type="text" value={billingAddr.lastName}
-                        onChange={(e) => setBillingAddr((p) => ({ ...p, lastName: e.target.value }))} required />
+                      <input
+                        className="field-input"
+                        type="text"
+                        value={billingAddr.lastName}
+                        onChange={(e) =>
+                          setBillingAddr((p) => ({ ...p, lastName: e.target.value }))
+                        }
+                        required
+                      />
                     </label>
                   </div>
                   <div className="form-row">
                     <label className="form-field form-field-full">
                       <span className="field-label">Street address *</span>
-                      <input className="field-input" type="text" placeholder="123 Main St"
+                      <input
+                        className="field-input"
+                        type="text"
+                        placeholder="123 Main St"
                         value={billingAddr.address1}
-                        onChange={(e) => setBillingAddr((p) => ({ ...p, address1: e.target.value }))} required />
+                        onChange={(e) =>
+                          setBillingAddr((p) => ({ ...p, address1: e.target.value }))
+                        }
+                        required
+                      />
                     </label>
                   </div>
                   <div className="form-row form-row-cols">
                     <label className="form-field">
                       <span className="field-label">City *</span>
-                      <input className="field-input" type="text" value={billingAddr.city}
-                        onChange={(e) => setBillingAddr((p) => ({ ...p, city: e.target.value }))} required />
+                      <input
+                        className="field-input"
+                        type="text"
+                        value={billingAddr.city}
+                        onChange={(e) => setBillingAddr((p) => ({ ...p, city: e.target.value }))}
+                        required
+                      />
                     </label>
                     <label className="form-field">
                       <span className="field-label">State *</span>
-                      <input className="field-input" type="text" placeholder="CA" maxLength={2}
+                      <input
+                        className="field-input"
+                        type="text"
+                        placeholder="CA"
+                        maxLength={2}
                         value={billingAddr.state}
-                        onChange={(e) => setBillingAddr((p) => ({ ...p, state: e.target.value }))} required />
+                        onChange={(e) => setBillingAddr((p) => ({ ...p, state: e.target.value }))}
+                        required
+                      />
                     </label>
                   </div>
                 </>
@@ -1863,23 +2213,61 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
 
             {loadingShippingOpts && !redirectingToHostedCheckout && (
               <p className="lookup-checking">
-                <Spinner /> {shippingConfirmed ? 'Confirming your order details…' : 'Fetching shipping options…'}
+                <Spinner />{' '}
+                {shippingConfirmed
+                  ? 'Confirming your order details…'
+                  : 'Fetching shipping options…'}
               </p>
+            )}
+
+            {showLoanConsent && (
+              <LoanConsent
+                approvedAmount={summarySession.loan.approvedAmount}
+                dueToday={summaryLoan.residual}
+                fmt={fmt}
+                loanAmount={selectedLoanAmount}
+                loanReference={summarySession.loan.loanReference}
+                loanStatus={loanStatus ?? summarySession.loan.status}
+                maxLoan={maxLoanAmount}
+                onLoanAmountChange={(amount) => {
+                  setLoanAmount(Math.min(Math.max(amount, 0), maxLoanAmount));
+                  setLoanAppliedAmount(0);
+                  setLoanStatus(summarySession.loan.status);
+                }}
+                onUseLoanChange={(nextUseLoan) => {
+                  setUseLoan(nextUseLoan);
+                  setLoanAppliedAmount(0);
+                  setLoanStatus(summarySession.loan.status);
+                }}
+                orderTotal={summarySession.grandTotal}
+                useLoan={useLoan}
+              />
             )}
 
             <button
               type="submit"
-              className={`cta-btn${submittingShipping || redirectingToHostedCheckout ? ' cta-btn-loading' : ''}`}
+              className={cx(
+                'cta-btn',
+                (submittingShipping || redirectingToHostedCheckout) && 'cta-btn-loading',
+              )}
               disabled={submittingShipping || loadingShippingOpts || redirectingToHostedCheckout}
             >
               {redirectingToHostedCheckout ? (
-                <><Spinner /> Redirecting to secure hosted checkout…</>
+                <>
+                  <Spinner /> Redirecting to secure hosted checkout…
+                </>
               ) : submittingShipping || loadingShippingOpts ? (
-                <><Spinner /> {shippingConfirmed ? 'Confirming details…' : 'Preparing checkout…'}</>
+                <>
+                  <Spinner /> {shippingConfirmed ? 'Confirming details…' : 'Preparing checkout…'}
+                </>
               ) : HOSTED_CHECKOUT_FLOW_CONFIG.enabled ? (
-                'Continue to secure payment →'
+                useLoanForSummary ? (
+                  `Apply loan and pay ${fmt(summaryLoan.residual)} securely ->`
+                ) : (
+                  'Continue to secure payment ->'
+                )
               ) : (
-                'Continue to payment →'
+                'Continue to payment ->'
               )}
             </button>
           </section>
@@ -1914,6 +2302,130 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
   }
 
   return null;
+}
+
+function LoanConsent({
+  approvedAmount,
+  dueToday,
+  fmt,
+  loanAmount,
+  loanReference,
+  loanStatus,
+  maxLoan,
+  onLoanAmountChange,
+  onUseLoanChange,
+  orderTotal,
+  useLoan,
+}: {
+  approvedAmount: number;
+  dueToday: number;
+  fmt: (n: number) => string;
+  loanAmount: number;
+  loanReference?: string;
+  loanStatus?: string | null;
+  maxLoan: number;
+  onLoanAmountChange: (amount: number) => void;
+  onUseLoanChange: (useLoan: boolean) => void;
+  orderTotal: number;
+  useLoan: boolean;
+}) {
+  const loanPct = maxLoan > 0 ? (loanAmount / maxLoan) * 100 : 0;
+  const splitPct = orderTotal > 0 ? (loanAmount / orderTotal) * 100 : 0;
+
+  return (
+    <section className="financing-card loan-consent" aria-label="Merchant loan approval">
+      <div className="financing-header loan-consent-header">
+        <div className="financing-badge">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <circle cx="7" cy="7" r="7" fill="#197a47" />
+            <path
+              d="M4 7.5l2 2 4-4"
+              stroke="white"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          {loanStatus === 'Under Processing' ? 'Processing' : 'Pre-approved'}
+        </div>
+        <h2 className="financing-title">Use your merchant loan before payment</h2>
+        <p className="financing-subtitle">
+          You are approved for up to <strong>{fmt(approvedAmount)}</strong>. Choose how much to
+          apply now; unused funds do not carry over after this order.
+        </p>
+      </div>
+
+      <div className="financing-toggle-row">
+        <div className="financing-toggle-text">
+          <div className="financing-toggle-main">Apply loan to this order</div>
+          <div className="financing-toggle-sub">
+            {loanReference ? `Loan ${loanReference} · ` : ''}Final validation happens when you
+            continue to payment
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={useLoan}
+          className={cx('toggle-switch', useLoan && 'toggle-switch-on')}
+          onClick={() => onUseLoanChange(!useLoan)}
+          aria-label="Apply merchant loan to this order"
+        >
+          <span className="toggle-thumb" />
+        </button>
+      </div>
+
+      {useLoan && (
+        <div className="financing-expanded">
+          <div className="financing-amount-header">
+            <span className="financing-amount-label">Loan amount</span>
+            <span className="financing-amount-value">{fmt(loanAmount)}</span>
+          </div>
+
+          <input
+            type="range"
+            className="financing-slider"
+            min={0}
+            max={maxLoan}
+            step={10}
+            value={loanAmount}
+            onChange={(event) => onLoanAmountChange(Number(event.target.value))}
+            style={{ '--loan-pct': `${loanPct}%` } as React.CSSProperties}
+            aria-label="Loan amount"
+          />
+
+          <div className="financing-slider-bounds">
+            <span>{fmt(0)}</span>
+            <span>{fmt(maxLoan)}</span>
+          </div>
+
+          <div className="financing-split-preview">
+            <div className="financing-split-bar-wrap" aria-hidden="true">
+              <div className="financing-split-bar-loan" style={{ width: `${splitPct}%` }} />
+            </div>
+            <div className="financing-split-amounts">
+              <div className="financing-split-item">
+                <span className="financing-split-dot financing-split-dot-green" />
+                <span>
+                  <span className="financing-split-label">Loan applied</span>
+                  <span className="financing-split-value financing-split-value-green">
+                    {fmt(loanAmount)}
+                  </span>
+                </span>
+              </div>
+              <div className="financing-split-item">
+                <span className="financing-split-dot financing-split-dot-ink" />
+                <span>
+                  <span className="financing-split-label">Due at payment</span>
+                  <span className="financing-split-value">{fmt(dueToday)}</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }
 
 function OrderSummaryCard({
@@ -1954,7 +2466,10 @@ function OrderSummaryCard({
             <div key={idx} className="rail-discount-row">
               <span className="discount-chip">
                 <svg width="9" height="9" viewBox="0 0 9 9" fill="none" aria-hidden="true">
-                  <path d="M4.5.9l.9 1.8 2 .3-1.45 1.4.34 2L4.5 5.5l-1.79.9.34-2L1.6 3l2-.3z" fill="currentColor"/>
+                  <path
+                    d="M4.5.9l.9 1.8 2 .3-1.45 1.4.34 2L4.5 5.5l-1.79.9.34-2L1.6 3l2-.3z"
+                    fill="currentColor"
+                  />
                 </svg>
                 {d.label}
               </span>
@@ -2070,7 +2585,8 @@ function CheckoutFlowOverview({
     { key: 'payment', label: 'Payment' },
   ];
   const currentWizardIndex = wizardSteps.findIndex((wizardStep) => wizardStep.key === step);
-  const currentSnapshotKey = step === 'guest' ? 'contact' : step === 'shipping' ? 'delivery' : 'payment';
+  const currentSnapshotKey =
+    step === 'guest' ? 'contact' : step === 'shipping' ? 'delivery' : 'payment';
 
   const wizardNodes = wizardSteps.flatMap((wizardStep, index) => {
     const state =
@@ -2096,7 +2612,10 @@ function CheckoutFlowOverview({
       nodes.push(
         <span
           key={`connector-${wizardStep.key}`}
-          className={`checkout-progress-connector${index < currentWizardIndex ? ' checkout-progress-connector-complete' : ''}`}
+          className={cx(
+            'checkout-progress-connector',
+            index < currentWizardIndex && 'checkout-progress-connector-complete',
+          )}
           aria-hidden="true"
         />,
       );
@@ -2169,22 +2688,25 @@ function CheckoutFlowOverview({
           const state = resolveSnapshotState(row.key, row.complete);
 
           return (
-            <article key={row.key} className={`checkout-snapshot-row checkout-snapshot-row-${state}`}>
+            <article
+              key={row.key}
+              className={`checkout-snapshot-row checkout-snapshot-row-${state}`}
+            >
               <div className="checkout-snapshot-row-top">
                 <p className="checkout-snapshot-label">{row.label}</p>
                 <span className={`checkout-snapshot-state checkout-snapshot-state-${state}`}>
-                  {state === 'complete' ? 'Completed' : state === 'current' ? 'In progress' : 'Pending'}
+                  {state === 'complete'
+                    ? 'Completed'
+                    : state === 'current'
+                      ? 'In progress'
+                      : 'Pending'}
                 </span>
               </div>
 
               <p className="checkout-snapshot-value">{row.summary}</p>
 
               {row.onEdit && row.complete && (
-                <button
-                  type="button"
-                  className="checkout-snapshot-edit"
-                  onClick={row.onEdit}
-                >
+                <button type="button" className="checkout-snapshot-edit" onClick={row.onEdit}>
                   Edit
                 </button>
               )}
@@ -2224,7 +2746,8 @@ function CardIcon() {
 function PayPalLogo() {
   return (
     <span className="paypal-wordmark" aria-label="PayPal" role="img">
-      <span className="paypal-pay">Pay</span><span className="paypal-pal">Pal</span>
+      <span className="paypal-pay">Pay</span>
+      <span className="paypal-pal">Pal</span>
     </span>
   );
 }
@@ -2232,8 +2755,18 @@ function PayPalLogo() {
 function ApplePayLogo() {
   return (
     <span className="apple-pay-wordmark" aria-label="Apple Pay" role="img">
-      <svg width="10" height="13" viewBox="0 0 10 13" fill="none" aria-hidden="true" style={{ marginRight: 4 }}>
-        <path d="M8.3 6.7c0-1.05.72-1.57.76-1.6-.42-.6-1.07-.68-1.3-.7-.56-.05-1.09.33-1.37.33s-.73-.32-1.2-.31c-.62.01-1.19.36-1.51.91-.65 1.12-.17 2.78.46 3.69.31.45.68 1.2 1.46 1.17.58-.02.81-.37 1.52-.37s.91.37 1.53.36c.63-.01 1.03-.57 1.41-1.13.45-.64.63-1.27.64-1.3-.01-.01-.94-.35-.94-1.25zm-1.1-2.48c.32-.39.53-1 .46-1.57-.44.02-1 .3-1.33.69-.29.33-.54.86-.48 1.38.49.04.99-.26 1.35-.5z" fill="currentColor"/>
+      <svg
+        width="10"
+        height="13"
+        viewBox="0 0 10 13"
+        fill="none"
+        aria-hidden="true"
+        style={{ marginRight: 4 }}
+      >
+        <path
+          d="M8.3 6.7c0-1.05.72-1.57.76-1.6-.42-.6-1.07-.68-1.3-.7-.56-.05-1.09.33-1.37.33s-.73-.32-1.2-.31c-.62.01-1.19.36-1.51.91-.65 1.12-.17 2.78.46 3.69.31.45.68 1.2 1.46 1.17.58-.02.81-.37 1.52-.37s.91.37 1.53.36c.63-.01 1.03-.57 1.41-1.13.45-.64.63-1.27.64-1.3-.01-.01-.94-.35-.94-1.25zm-1.1-2.48c.32-.39.53-1 .46-1.57-.44.02-1 .3-1.33.69-.29.33-.54.86-.48 1.38.49.04.99-.26 1.35-.5z"
+          fill="currentColor"
+        />
       </svg>
       Pay
     </span>
@@ -2243,7 +2776,12 @@ function ApplePayLogo() {
 function GooglePayLogo() {
   return (
     <span className="google-pay-wordmark" aria-label="Google Pay" role="img">
-      <span style={{ color: '#4285F4' }}>G</span><span style={{ color: '#EA4335' }}>o</span><span style={{ color: '#FBBC05' }}>o</span><span style={{ color: '#34A853' }}>g</span><span style={{ color: '#EA4335' }}>l</span><span style={{ color: '#4285F4' }}>e</span>
+      <span style={{ color: '#4285F4' }}>G</span>
+      <span style={{ color: '#EA4335' }}>o</span>
+      <span style={{ color: '#FBBC05' }}>o</span>
+      <span style={{ color: '#34A853' }}>g</span>
+      <span style={{ color: '#EA4335' }}>l</span>
+      <span style={{ color: '#4285F4' }}>e</span>
       <span style={{ color: '#5F6368', marginLeft: 3 }}>Pay</span>
     </span>
   );
@@ -2467,24 +3005,27 @@ function PaymentStep({
     };
   }, [session.checkoutId]);
 
-  const redirectToHostedCheckout = useCallback(async (paymentMethod?: SdkPaymentMethod) => {
-    const hostedLaunchUrl = await resolveHostedCheckoutLaunchUrl({
-      checkoutId: session.checkoutId,
-      localePrefix,
-      email,
-      currency: session.currencyCode,
-      paymentOnly: HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyMode,
-      paymentMethod: paymentMethod
-        ? {
-            id: paymentMethod.id,
-            gateway: paymentMethod.gateway,
-            method: paymentMethod.method,
-          }
-        : undefined,
-    });
+  const redirectToHostedCheckout = useCallback(
+    async (paymentMethod?: SdkPaymentMethod) => {
+      const hostedLaunchUrl = await resolveHostedCheckoutLaunchUrl({
+        checkoutId: session.checkoutId,
+        localePrefix,
+        email,
+        currency: session.currencyCode,
+        paymentOnly: HOSTED_CHECKOUT_FLOW_CONFIG.paymentOnlyMode,
+        paymentMethod: paymentMethod
+          ? {
+              id: paymentMethod.id,
+              gateway: paymentMethod.gateway,
+              method: paymentMethod.method,
+            }
+          : undefined,
+      });
 
-    window.location.assign(hostedLaunchUrl);
-  }, [email, localePrefix, session.checkoutId, session.currencyCode]);
+      window.location.assign(hostedLaunchUrl);
+    },
+    [email, localePrefix, session.checkoutId, session.currencyCode],
+  );
 
   // ── Submit ────────────────────────────────────────────────────────────────
 
@@ -2560,9 +3101,7 @@ function PaymentStep({
         await redirectToHostedCheckout(selectedMethod);
         return;
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : 'Something went wrong. Please try again.',
-        );
+        setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
       } finally {
         submitLockRef.current = false;
         setSubmitting(false);
@@ -2584,9 +3123,7 @@ function PaymentStep({
   const selectedMethod = availableMethods.find((m) => m.id === paymentMethod);
   const manualSelected = selectedMethod ? isManualMethod(selectedMethod) : false;
   const showLoanForSelection = showLoan && manualSelected;
-  const disableSubmit =
-    submitting ||
-    !paymentMethod;
+  const disableSubmit = submitting || !paymentMethod;
   const selectedMethodLabel = selectedMethod?.name || selectedMethod?.method || 'Selected method';
   const paymentSummary = loadingMethods
     ? 'Loading payment options…'
@@ -2624,9 +3161,13 @@ function PaymentStep({
         onEditDelivery={onBack}
       />
 
-      <form className="checkout-grid" onSubmit={(e) => { void handleSubmit(e); }}>
+      <form
+        className="checkout-grid"
+        onSubmit={(e) => {
+          void handleSubmit(e);
+        }}
+      >
         <section className="checkout-main">
-
           {/* ── Financing card ──────────────────────────────────────── */}
           {showLoanForSelection && (
             <div className="financing-card">
@@ -2634,27 +3175,34 @@ function PaymentStep({
                 <div className="financing-badge">
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                     <circle cx="7" cy="7" r="7" fill="#197a47" />
-                    <path d="M4 7.5l2 2 4-4" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    <path
+                      d="M4 7.5l2 2 4-4"
+                      stroke="white"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
                   </svg>
                   Pre-Approved
                 </div>
                 <h2 className="financing-title">Merchant Financing Available</h2>
                 <p className="financing-subtitle">
-                  You&apos;re approved for up to{' '}
-                  <strong>{fmt(session.loan.approvedAmount)}</strong> — apply it to reduce what
-                  you pay by card today.
+                  You&apos;re approved for up to <strong>{fmt(session.loan.approvedAmount)}</strong>{' '}
+                  — apply it to reduce what you pay by card today.
                 </p>
               </div>
               <div className="financing-toggle-row">
                 <div className="financing-toggle-text">
                   <div className="financing-toggle-main">Apply financing to this order</div>
-                  <div className="financing-toggle-sub">Reduces the amount charged to your card today</div>
+                  <div className="financing-toggle-sub">
+                    Reduces the amount charged to your card today
+                  </div>
                 </div>
                 <button
                   type="button"
                   role="switch"
                   aria-checked={useLoan}
-                  className={`toggle-switch${useLoan ? ' toggle-switch-on' : ''}`}
+                  className={cx('toggle-switch', useLoan && 'toggle-switch-on')}
                   onClick={() => setUseLoan(!useLoan)}
                   aria-label="Toggle financing"
                 >
@@ -2675,7 +3223,9 @@ function PaymentStep({
                     step={10}
                     value={loanAmount}
                     onChange={(e) => setLoanAmount(parseFloat(e.target.value))}
-                    style={{ '--loan-pct': `${(loanAmount / maxLoan) * 100}%` } as React.CSSProperties}
+                    style={
+                      { '--loan-pct': `${(loanAmount / maxLoan) * 100}%` } as React.CSSProperties
+                    }
                     aria-label="Financing amount"
                   />
                   <div className="financing-slider-bounds">
@@ -2695,19 +3245,23 @@ function PaymentStep({
                 : `Pay ${fmt(session.grandTotal)} by`}
             </p>
             {loadingMethods ? (
-              <p className="lookup-checking"><Spinner /> Loading payment options…</p>
+              <p className="lookup-checking">
+                <Spinner /> Loading payment options…
+              </p>
             ) : (
               <div className="method-grid">
-                {resolvePaymentMethods(availableMethods, showLoanForSelection && useLoan).map((methodOption) => (
-                  <MethodRadio
-                    key={methodOption.id}
-                    checked={paymentMethod === methodOption.id}
-                    onChange={() => setPaymentMethod(methodOption.id)}
-                    label={methodOption.label}
-                  >
-                    {methodOption.icon}
-                  </MethodRadio>
-                ))}
+                {resolvePaymentMethods(availableMethods, showLoanForSelection && useLoan).map(
+                  (methodOption) => (
+                    <MethodRadio
+                      key={methodOption.id}
+                      checked={paymentMethod === methodOption.id}
+                      onChange={() => setPaymentMethod(methodOption.id)}
+                      label={methodOption.label}
+                    >
+                      {methodOption.icon}
+                    </MethodRadio>
+                  ),
+                )}
               </div>
             )}
           </div>
@@ -2726,9 +3280,9 @@ function PaymentStep({
             <div className="card section-gap">
               <p className="section-label">Secure payment</p>
               <p style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.6 }}>
-                You selected <strong>{selectedMethod.name}</strong>. Payment details are finalized in
-                BigCommerce&apos;s secure payment step, then you&apos;ll return here for your order
-                confirmation.
+                You selected <strong>{selectedMethod.name}</strong>. Payment details are finalized
+                in BigCommerce&apos;s secure payment step, then you&apos;ll return here for your
+                order confirmation.
               </p>
             </div>
           )}
@@ -2737,11 +3291,13 @@ function PaymentStep({
 
           <button
             type="submit"
-            className={`cta-btn${submitting ? ' cta-btn-loading' : ''}`}
+            className={cx('cta-btn', submitting && 'cta-btn-loading')}
             disabled={disableSubmit}
           >
             {submitting ? (
-              <><Spinner /> Processing…</>
+              <>
+                <Spinner /> Processing…
+              </>
             ) : manualSelected && selectedMethod?.method === 'bank-deposit' ? (
               'Place order — pay by bank transfer'
             ) : manualSelected && selectedMethod?.method === 'cash-on-delivery' ? (
@@ -2800,7 +3356,7 @@ function resolvePaymentMethods(
   const mapped =
     sdkMethods.length === 0
       ? FALLBACK_METHODS
-      : (sdkMethods
+      : sdkMethods
           .map((m) => {
             const kind = inferMethodKind(m);
             const method = m.method || 'online-payment';
@@ -2822,7 +3378,8 @@ function resolvePaymentMethods(
               icon = <AmazonPayLogo />;
             } else if (kind === 'manual') {
               if (method === 'bank-deposit') icon = <span style={{ fontSize: 18 }}>🏦</span>;
-              else if (method === 'cash-on-delivery') icon = <span style={{ fontSize: 18 }}>💵</span>;
+              else if (method === 'cash-on-delivery')
+                icon = <span style={{ fontSize: 18 }}>💵</span>;
               else if (method === 'check') icon = <span style={{ fontSize: 18 }}>📋</span>;
               else icon = <span style={{ fontSize: 18 }}>🧾</span>;
             } else if (kind === 'card') {
@@ -2841,7 +3398,7 @@ function resolvePaymentMethods(
             } satisfies PaymentMethodDisplay;
           })
           .filter((x): x is NonNullable<typeof x> => x !== null)
-          .filter((m, i, arr) => arr.findIndex((n) => n.id === m.id) === i));
+          .filter((m, i, arr) => arr.findIndex((n) => n.id === m.id) === i);
 
   return mapped;
 }
@@ -2871,11 +3428,7 @@ function inferMethodKind(m: SdkPaymentMethod): 'manual' | 'card' | 'wallet' | 'o
     return 'online';
   }
 
-  if (
-    method.includes('google') ||
-    method.includes('apple') ||
-    method.includes('amazon')
-  ) {
+  if (method.includes('google') || method.includes('apple') || method.includes('amazon')) {
     return 'wallet';
   }
 
@@ -3086,9 +3639,7 @@ async function resolveCheckoutReturnToken({
     return payload.token;
   }
 
-  throw new Error(
-    payload.error ?? `Could not prepare secure checkout return [${res.status}].`,
-  );
+  throw new Error(payload.error ?? `Could not prepare secure checkout return [${res.status}].`);
 }
 
 async function resolveHostedCheckoutHandoffToken(
@@ -3112,9 +3663,7 @@ async function resolveHostedCheckoutHandoffToken(
   );
 }
 
-async function resolveHostedCheckoutLaunchUrl(
-  request: HostedLaunchUrlRequest,
-): Promise<string> {
+async function resolveHostedCheckoutLaunchUrl(request: HostedLaunchUrlRequest): Promise<string> {
   const res = await fetch('/api/checkout/hosted-launch-url', {
     method: 'POST',
     headers: {
@@ -3129,9 +3678,7 @@ async function resolveHostedCheckoutLaunchUrl(
   }
 
   throw new Error(
-    payload.error ??
-      payload.detail ??
-      `Could not launch secure hosted checkout [${res.status}].`,
+    payload.error ?? payload.detail ?? `Could not launch secure hosted checkout [${res.status}].`,
   );
 }
 
@@ -3157,9 +3704,7 @@ async function resolveHostedCheckoutUrl(
       }
 
       const message =
-        payload.error ??
-        payload.detail ??
-        `Could not open secure hosted checkout [${res.status}].`;
+        payload.error ?? payload.detail ?? `Could not open secure hosted checkout [${res.status}].`;
       const retryable = res.status === 429 || res.status >= 500;
 
       if (!retryable || attempt === HOSTED_CHECKOUT_MAX_ATTEMPTS) {
@@ -3169,9 +3714,7 @@ async function resolveHostedCheckoutUrl(
       lastError = new Error(message);
     } catch (err) {
       const nextError =
-        err instanceof Error
-          ? err
-          : new Error('Could not open secure hosted checkout.');
+        err instanceof Error ? err : new Error('Could not open secure hosted checkout.');
 
       if (attempt === HOSTED_CHECKOUT_MAX_ATTEMPTS) {
         throw nextError;
@@ -3186,9 +3729,7 @@ async function resolveHostedCheckoutUrl(
   throw lastError ?? new Error('Could not open secure hosted checkout.');
 }
 
-async function parseHostedCheckoutResponse(
-  res: Response,
-): Promise<HostedCheckoutUrlResponse> {
+async function parseHostedCheckoutResponse(res: Response): Promise<HostedCheckoutUrlResponse> {
   const bodyText = await res.text();
 
   if (!bodyText) {
@@ -3234,12 +3775,12 @@ function MethodRadio({ checked, onChange, label, children }: MethodRadioProps) {
       type="button"
       role="radio"
       aria-checked={checked}
-      className={`method-radio${checked ? ' method-radio-selected' : ''}`}
+      className={cx('method-radio', checked && 'method-radio-selected')}
       onClick={onChange}
     >
       <span className="method-radio-icon">{children}</span>
       <span className="method-radio-label">{label}</span>
-      <span className={`method-radio-circle${checked ? ' method-radio-circle-selected' : ''}`} />
+      <span className={cx('method-radio-circle', checked && 'method-radio-circle-selected')} />
     </button>
   );
 }
@@ -3266,9 +3807,7 @@ async function resolveHostedLaunchUrl(checkoutUrl: string, checkoutId: string): 
   );
 }
 
-async function parseHostedLaunchUrlResponse(
-  res: Response,
-): Promise<HostedLaunchUrlResponse> {
+async function parseHostedLaunchUrlResponse(res: Response): Promise<HostedLaunchUrlResponse> {
   const bodyText = await res.text();
 
   if (!bodyText) {

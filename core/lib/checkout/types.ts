@@ -40,6 +40,8 @@ export interface CheckoutSession {
     approvedAmount: number;
     selected: boolean;
     appliedAmount: number;
+    status: 'Active' | 'Under Processing' | 'Used' | string | null;
+    loanReference?: string;
   };
   /** Feature flag: true when the merchant has merchant-financing enabled (LOAN_ENABLED=true) */
   loanEnabled: boolean;
