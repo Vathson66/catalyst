@@ -199,7 +199,7 @@ export default async function OrderConfirmationPage({ searchParams }: Props) {
               <Link className="confirmation-primary-link" href="/">
                 Continue shopping
               </Link>
-              <Link className="confirmation-secondary-link" href="/account/orders">
+              <Link className="confirmation-secondary-link" href="/account/orders" prefetch="none">
                 View order history
               </Link>
             </div>

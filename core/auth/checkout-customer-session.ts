@@ -1,9 +1,12 @@
 import { cookies, headers } from 'next/headers';
-import { User } from 'next-auth';
-import { decode, encode } from 'next-auth/jwt';
+import type { User } from 'next-auth';
 
-const checkoutCustomerCookieName = 'authjs.checkout-customer-session-token';
-const checkoutCustomerSessionMaxAge = 60 * 60 * 24 * 7;
+import {
+  checkoutCustomerSessionMaxAge,
+  decodeCheckoutCustomerSession,
+  encodeCheckoutCustomerSession,
+  resolveCheckoutCustomerCookieName,
+} from './checkout-customer-session-token';
 
 const shouldUseSecureCookie = async () => {
   const headersList = await headers();
@@ -13,36 +16,17 @@ const shouldUseSecureCookie = async () => {
 
 async function resolveCookieOptions() {
   const useSecureCookies = await shouldUseSecureCookie();
-  const cookiePrefix = useSecureCookies ? '__Secure-' : '';
 
   return {
-    name: `${cookiePrefix}${checkoutCustomerCookieName}`,
+    name: resolveCheckoutCustomerCookieName(useSecureCookies),
     secure: useSecureCookies,
   };
-}
-
-function resolveSecret(): string {
-  const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
-
-  if (!secret) {
-    throw new Error('AUTH_SECRET is not set');
-  }
-
-  return secret;
 }
 
 export async function checkoutCustomerSignIn(user: User): Promise<void> {
   const cookieJar = await cookies();
   const { name, secure } = await resolveCookieOptions();
-  const secret = resolveSecret();
-  const token = await encode({
-    salt: name,
-    secret,
-    token: {
-      user,
-    },
-    maxAge: checkoutCustomerSessionMaxAge,
-  });
+  const token = await encodeCheckoutCustomerSession(user, name);
 
   cookieJar.set(name, token, {
     secure,
@@ -61,18 +45,7 @@ export async function getCheckoutCustomerSession(): Promise<{ user?: User } | nu
     return null;
   }
 
-  try {
-    return (await decode({
-      secret: resolveSecret(),
-      salt: name,
-      token: token.value,
-    })) as { user?: User } | null;
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('Failed to decode checkout customer session cookie', error);
-
-    return null;
-  }
+  return decodeCheckoutCustomerSession(token.value, name);
 }
 
 export async function clearCheckoutCustomerSession(): Promise<void> {

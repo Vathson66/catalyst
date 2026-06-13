@@ -1,6 +1,10 @@
 import { NextResponse, URLPattern } from 'next/server';
 
 import { anonymousSignIn, auth, clearAnonymousSession, getAnonymousSession } from '~/auth';
+import {
+  decodeCheckoutCustomerSession,
+  resolveCheckoutCustomerCookieNames,
+} from '~/auth/checkout-customer-session-token';
 
 import { type ProxyFactory } from './compose-proxies';
 
@@ -11,12 +15,32 @@ function redirectToLogin(url: string) {
   return NextResponse.redirect(new URL('/login', url), { status: 302 });
 }
 
+async function getCheckoutCustomerAccessToken(req: Parameters<Parameters<typeof auth>[0]>[0]) {
+  const sessions = await Promise.all(
+    resolveCheckoutCustomerCookieNames().map(async (cookieName) => {
+      const token = req.cookies.get(cookieName)?.value;
+
+      if (!token) {
+        return null;
+      }
+
+      return decodeCheckoutCustomerSession(token, cookieName);
+    }),
+  );
+  const session = sessions.find((candidate) => candidate?.user?.customerAccessToken);
+
+  return session?.user?.customerAccessToken;
+}
+
 export const withAuth: ProxyFactory = (next) => {
   return async (request, event) => {
     return auth(async (req) => {
       const anonymousSession = await getAnonymousSession();
       const isProtectedRoute = protectedPathPattern.test(req.nextUrl.toString().toLowerCase());
       const isGetRequest = req.method === 'GET';
+      const checkoutCustomerAccessToken = isProtectedRoute
+        ? await getCheckoutCustomerAccessToken(req)
+        : undefined;
 
       // Create the anonymous session if it doesn't exist
       if (!req.auth && !anonymousSession) {
@@ -29,6 +53,10 @@ export const withAuth: ProxyFactory = (next) => {
       }
 
       if (!req.auth) {
+        if (isProtectedRoute && isGetRequest && checkoutCustomerAccessToken) {
+          return next(req, event);
+        }
+
         if (isProtectedRoute && isGetRequest) {
           return redirectToLogin(req.url);
         }
@@ -38,7 +66,12 @@ export const withAuth: ProxyFactory = (next) => {
 
       const { customerAccessToken } = req.auth.user ?? {};
 
-      if (isProtectedRoute && isGetRequest && !customerAccessToken) {
+      if (
+        isProtectedRoute &&
+        isGetRequest &&
+        !customerAccessToken &&
+        !checkoutCustomerAccessToken
+      ) {
         return redirectToLogin(req.url);
       }
 
