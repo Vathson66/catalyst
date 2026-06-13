@@ -45,6 +45,11 @@ interface SelectShippingResponse {
   session?: CheckoutSession;
 }
 
+interface CheckoutSessionResponse {
+  error?: string;
+  session?: CheckoutSession;
+}
+
 const MOCK_SHIPPING_OPTIONS: SdkShippingOption[] = [
   {
     id: 'ship-standard',
@@ -69,7 +74,13 @@ const MOCK_SHIPPING_OPTIONS: SdkShippingOption[] = [
 
 const MOCK_PAYMENT_METHODS: SdkPaymentMethod[] = [
   { id: 'card', method: 'credit-card', name: 'Credit / Debit Card', kind: 'online' },
-  { id: 'paypalcommerce', method: 'paypal', name: 'PayPal', gateway: 'paypalcommerce', kind: 'online' },
+  {
+    id: 'paypalcommerce',
+    method: 'paypal',
+    name: 'PayPal',
+    gateway: 'paypalcommerce',
+    kind: 'online',
+  },
   { id: 'googlepay', method: 'googlepay', name: 'Google Pay', kind: 'wallet' },
   { id: 'applepay', method: 'applepay', name: 'Apple Pay', kind: 'wallet' },
   { id: 'amazonpay', method: 'amazonpay', name: 'Amazon Pay', kind: 'wallet' },
@@ -154,8 +165,8 @@ export class CheckoutSdkAdapter {
     return data.session ?? null;
   }
 
-  async updateBillingAddress(addr: AddressInput): Promise<void> {
-    if (this.isMock) return;
+  async updateBillingAddress(addr: AddressInput): Promise<CheckoutSession | null> {
+    if (this.isMock) return null;
 
     const res = await fetch('/api/checkout/billing-address', {
       method: 'POST',
@@ -163,10 +174,13 @@ export class CheckoutSdkAdapter {
       body: JSON.stringify({ checkoutId: this.checkoutId, address: addr }),
     });
 
-    if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
+    const data = (await res.json()) as CheckoutSessionResponse;
+
+    if (!res.ok || data.error) {
       throw new Error(data.error ?? `Billing address failed [${res.status}]`);
     }
+
+    return data.session ?? null;
   }
 
   async loadPaymentMethods(): Promise<SdkPaymentMethod[]> {

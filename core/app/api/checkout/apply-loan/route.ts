@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
-import { fetchLoanApproval } from '~/lib/checkout/bc-api/customer-metafields';
+import { fetchLoanApproval, updateLoanStatus } from '~/lib/checkout/bc-api/customer-metafields';
+import {
+  clearCustomerStoreCreditBalance,
+  setCustomerStoreCreditBalance,
+} from '~/lib/checkout/bc-api/customer-store-credit';
 import { loadCheckoutSession } from '~/lib/checkout/session';
 
 const ApplyLoanBodySchema = z.object({
@@ -33,7 +37,16 @@ export async function POST(request: NextRequest) {
     }
 
     const session = await loadCheckoutSession(checkoutId);
-    const loanApproval = await fetchLoanApproval(customerId ?? session.customerId);
+    const loanCustomerId = customerId ?? session.customerId;
+
+    if (!loanCustomerId || loanCustomerId <= 0) {
+      return NextResponse.json(
+        { error: 'A signed-in customer is required to apply a loan' },
+        { status: 409 },
+      );
+    }
+
+    const loanApproval = await fetchLoanApproval(loanCustomerId);
     const maxApplicableAmount = Math.min(loanApproval.approvedAmount, session.grandTotal);
 
     if (!loanApproval.approved || loanApproval.status !== 'Active') {
@@ -48,6 +61,18 @@ export async function POST(request: NextRequest) {
         { error: 'Requested loan amount exceeds the available approval' },
         { status: 400 },
       );
+    }
+
+    await setCustomerStoreCreditBalance(loanCustomerId, requestedAmount);
+
+    try {
+      if (loanApproval.source === 'metafield') {
+        await updateLoanStatus(loanCustomerId, 'Under Processing');
+      }
+    } catch (error) {
+      await clearCustomerStoreCreditBalance(loanCustomerId);
+
+      throw error;
     }
 
     return NextResponse.json({

@@ -11,6 +11,11 @@ interface LoanPortfolio {
   history?: unknown[];
 }
 
+interface BcCustomerMetafield {
+  id: number;
+  value: string;
+}
+
 export interface LoanApproval {
   approved: boolean;
   approvedAmount: number;
@@ -117,7 +122,7 @@ export async function fetchLoanApproval(customerId: number): Promise<LoanApprova
     return EMPTY_LOAN_APPROVAL;
   }
 
-  const body = (await res.json()) as { data: Array<{ value: string }> };
+  const body = (await res.json()) as { data: BcCustomerMetafield[] };
 
   if (!body.data?.length) {
     return EMPTY_LOAN_APPROVAL;
@@ -129,5 +134,75 @@ export async function fetchLoanApproval(customerId: number): Promise<LoanApprova
     return parseLoanApprovalFromPortfolio(portfolio, 'metafield');
   } catch {
     return EMPTY_LOAN_APPROVAL;
+  }
+}
+
+async function fetchLoanPortfolioMetafield(
+  customerId: number,
+): Promise<{ metafieldId: number; portfolio: LoanPortfolio } | null> {
+  if (!customerId || customerId <= 0 || !hasManagementApiConfig()) {
+    return null;
+  }
+
+  const url =
+    `${bcManagementBase()}/customers/${encodeURIComponent(String(customerId))}/metafields` +
+    `?namespace=loan_details&key=portfolio`;
+
+  const res = await fetch(url, {
+    headers: bcManagementHeaders(),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+
+    throw new Error(`BC loan metafield fetch failed [${res.status}]: ${text}`);
+  }
+
+  const body = (await res.json()) as { data: BcCustomerMetafield[] };
+  const metafield = body.data?.[0];
+
+  if (!metafield) {
+    return null;
+  }
+
+  return {
+    metafieldId: metafield.id,
+    portfolio: JSON.parse(metafield.value) as LoanPortfolio,
+  };
+}
+
+export async function updateLoanStatus(customerId: number, status: LoanStatus): Promise<void> {
+  if (seededLoanDataEnabled()) {
+    return;
+  }
+
+  const loanMetafield = await fetchLoanPortfolioMetafield(customerId);
+
+  if (!loanMetafield?.portfolio.active_loan) {
+    return;
+  }
+
+  const nextPortfolio: LoanPortfolio = {
+    ...loanMetafield.portfolio,
+    active_loan: {
+      ...loanMetafield.portfolio.active_loan,
+      status,
+    },
+  };
+
+  const res = await fetch(
+    `${bcManagementBase()}/customers/${encodeURIComponent(String(customerId))}/metafields/${encodeURIComponent(String(loanMetafield.metafieldId))}`,
+    {
+      method: 'PUT',
+      headers: bcManagementHeaders(),
+      body: JSON.stringify({ value: JSON.stringify(nextPortfolio) }),
+    },
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+
+    throw new Error(`BC loan metafield update failed [${res.status}]: ${text}`);
   }
 }

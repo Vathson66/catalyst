@@ -1,5 +1,6 @@
 'use client';
 
+import { signIn as signInWithAuth } from 'next-auth/react';
 import { useLocale } from 'next-intl';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -408,9 +409,9 @@ function clearPersistedLoanSelection(checkoutId: string): void {
   }
 }
 
-function sendLoanResetBeacon(checkoutId: string): void {
+function sendLoanResetBeacon(checkoutId: string, customerId?: number): void {
   try {
-    const body = JSON.stringify({ checkoutId });
+    const body = JSON.stringify({ checkoutId, customerId });
     const blob = new Blob([body], { type: 'application/json' });
 
     if (!navigator.sendBeacon('/api/checkout/reset-loan', blob)) {
@@ -1048,6 +1049,18 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
         return;
       }
 
+      const authResult = await signInWithAuth('password', {
+        email: guestEmail,
+        password: signInPassword,
+        cartId: session.cartId,
+        redirect: false,
+      });
+
+      if (authResult?.error) {
+        setError('Could not keep you signed in across the storefront. Please try again.');
+        return;
+      }
+
       const normalisedAddresses = normaliseSavedAddresses(data.addresses);
 
       const customer: SignedInCustomer = {
@@ -1103,7 +1116,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
     } finally {
       setSigningIn(false);
     }
-  }, [applyCustomerLoanSession, guestEmail, signInPassword, showSignIn]);
+  }, [applyCustomerLoanSession, guestEmail, session.cartId, signInPassword, showSignIn]);
 
   const handleContinueAsCustomer = useCallback(() => {
     if (!signedInCustomer) return;
@@ -1348,7 +1361,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
         }
 
         const billing = sameAsShipping ? shippingAddr : billingAddr;
-        await sdk.updateBillingAddress({
+        const billingSession = await sdk.updateBillingAddress({
           firstName: billing.firstName,
           lastName: billing.lastName,
           address1: billing.address1,
@@ -1360,6 +1373,19 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
           phone: billing.phone || undefined,
           email: shippingAddr.email || guestEmail,
         });
+
+        if (billingSession) {
+          const loanAwareBillingSession: CheckoutSession = {
+            ...billingSession,
+            customerId: checkoutSessionForHandoff.customerId,
+            customer: checkoutSessionForHandoff.customer,
+            loan: checkoutSessionForHandoff.loan,
+            loanEnabled: checkoutSessionForHandoff.loanEnabled,
+          };
+
+          setSession(loanAwareBillingSession);
+          checkoutSessionForHandoff = loanAwareBillingSession;
+        }
 
         if (HOSTED_CHECKOUT_FLOW_CONFIG.enabled) {
           setRedirectingToHostedCheckout(true);
@@ -1409,23 +1435,23 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
           }
 
           const returnToken = await resolveCheckoutReturnToken({
-            checkoutId: session.checkoutId,
+            checkoutId: checkoutSessionForHandoff.checkoutId,
             email: shippingAddr.email || guestEmail,
-            currency: session.currencyCode,
+            currency: checkoutSessionForHandoff.currencyCode,
           });
           const launchOptions = {
             localePrefix,
             email: shippingAddr.email || guestEmail,
-            currency: session.currencyCode,
+            currency: checkoutSessionForHandoff.currencyCode,
             returnToken,
           };
           const handoffRequest = buildHostedCheckoutHandoffTokenRequest(
             launchOptions,
-            session.checkoutId,
+            checkoutSessionForHandoff.checkoutId,
           );
           const handoffToken = await resolveHostedCheckoutHandoffToken(handoffRequest);
           const checkoutUrl = await resolveHostedCheckoutUrl(
-            session.checkoutId,
+            checkoutSessionForHandoff.checkoutId,
             buildHostedCheckoutQueryParams(handoffToken),
           );
           const hostedCheckoutUrl = buildHostedCheckoutLaunchUrl(
@@ -1435,7 +1461,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
           );
           const hostedLaunchUrl = await resolveHostedLaunchUrl(
             hostedCheckoutUrl,
-            session.checkoutId,
+            checkoutSessionForHandoff.checkoutId,
           );
 
           window.location.assign(hostedLaunchUrl);
@@ -1544,7 +1570,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
 
     const handlePageHide = () => {
       if (!redirectingToHostedCheckoutRef.current) {
-        sendLoanResetBeacon(session.checkoutId);
+        sendLoanResetBeacon(session.checkoutId, session.customerId);
       }
     };
 
@@ -1553,7 +1579,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
     return () => {
       window.removeEventListener('pagehide', handlePageHide);
     };
-  }, [loanAppliedAmount, session.checkoutId]);
+  }, [loanAppliedAmount, session.checkoutId, session.customerId]);
   const shippingMethodSummary = selectedShippingOption
     ? selectedShippingOption.description
     : shippingConfirmed

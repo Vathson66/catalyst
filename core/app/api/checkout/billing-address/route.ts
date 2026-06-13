@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { bcManagementBase, bcManagementHeaders } from '~/lib/checkout/bc-api/auth';
+import { loadCheckoutSession } from '~/lib/checkout/session';
 
 interface BcCheckoutBillingResponse {
   data?: { billing_address?: { id?: string } };
@@ -76,7 +77,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    return NextResponse.json({ success: true });
+    const session = await loadCheckoutSession(checkoutId);
+
+    return NextResponse.json({ success: true, session });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
