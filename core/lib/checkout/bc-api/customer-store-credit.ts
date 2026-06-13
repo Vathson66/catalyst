@@ -35,38 +35,36 @@ export async function fetchCustomerStoreCreditBalance(customerId: number): Promi
   return toNumber(customer.store_credit);
 }
 
-async function postCustomerStoreCreditAdjustment(
-  customerId: number,
-  amount: number,
-): Promise<void> {
-  const roundedAmount = roundMoney(amount);
+async function updateCustomerStoreCreditBalance(customerId: number, amount: number): Promise<void> {
+  const requestedAmount = roundMoney(amount);
 
-  if (roundedAmount === 0) {
-    return;
+  if (!Number.isFinite(requestedAmount) || requestedAmount < 0) {
+    throw new Error('Store credit amount is invalid');
   }
 
-  const res = await fetch(
-    `${bcManagementBase()}/customers/${encodeURIComponent(String(customerId))}/store-credit`,
-    {
-      method: 'POST',
-      headers: bcManagementHeaders(),
-      body: JSON.stringify({ amount: roundedAmount }),
-    },
-  );
+  const res = await fetch(`${bcV2Base()}/customers/${encodeURIComponent(String(customerId))}`, {
+    method: 'PUT',
+    headers: bcManagementHeaders(),
+    body: JSON.stringify({ store_credit: requestedAmount.toFixed(2) }),
+  });
 
   if (!res.ok) {
     const text = await res.text();
 
-    throw new Error(`BC store credit adjustment failed [${res.status}]: ${text}`);
+    throw new Error(`BC customer store credit update failed [${res.status}]: ${text}`);
+  }
+
+  const updatedBalance = roundMoney(await fetchCustomerStoreCreditBalance(customerId));
+
+  if (updatedBalance !== requestedAmount) {
+    throw new Error(
+      `BC customer store credit update mismatch: expected ${requestedAmount.toFixed(2)}, received ${updatedBalance.toFixed(2)}`,
+    );
   }
 }
 
 export async function clearCustomerStoreCreditBalance(customerId: number): Promise<void> {
-  const currentBalance = roundMoney(await fetchCustomerStoreCreditBalance(customerId));
-
-  if (currentBalance > 0) {
-    await postCustomerStoreCreditAdjustment(customerId, -currentBalance);
-  }
+  await updateCustomerStoreCreditBalance(customerId, 0);
 }
 
 export async function setCustomerStoreCreditBalance(
@@ -79,9 +77,5 @@ export async function setCustomerStoreCreditBalance(
     throw new Error('Store credit amount is invalid');
   }
 
-  await clearCustomerStoreCreditBalance(customerId);
-
-  if (requestedAmount > 0) {
-    await postCustomerStoreCreditAdjustment(customerId, requestedAmount);
-  }
+  await updateCustomerStoreCreditBalance(customerId, requestedAmount);
 }
