@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
-import { updateLoanStatus } from '~/lib/checkout/bc-api/customer-metafields';
+import { fetchLoanApproval, updateLoanStatus } from '~/lib/checkout/bc-api/customer-metafields';
 import { clearCustomerStoreCreditBalance } from '~/lib/checkout/bc-api/customer-store-credit';
 import { loadCheckoutSession } from '~/lib/checkout/session';
 
@@ -13,7 +13,7 @@ const ResetLoanBodySchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const bodyText = await request.text();
-    const body = bodyText ? JSON.parse(bodyText) : {};
+    const body: unknown = bodyText ? JSON.parse(bodyText) : {};
     const parseResult = ResetLoanBodySchema.safeParse(body);
 
     if (!parseResult.success) {
@@ -22,6 +22,7 @@ export async function POST(request: NextRequest) {
 
     const { checkoutId } = parseResult.data;
     let customerId = parseResult.data.customerId;
+    let status: string | null = 'Active';
 
     if (!customerId && checkoutId) {
       const session = await loadCheckoutSession(checkoutId);
@@ -30,10 +31,17 @@ export async function POST(request: NextRequest) {
 
     if (customerId) {
       await clearCustomerStoreCreditBalance(customerId);
-      await updateLoanStatus(customerId, 'Active');
+
+      const loanApproval = await fetchLoanApproval(customerId);
+      status = loanApproval.status;
+
+      if (loanApproval.status === 'Under Processing') {
+        await updateLoanStatus(customerId, 'Active');
+        status = 'Active';
+      }
     }
 
-    return NextResponse.json({ status: 'Active', appliedAmount: 0 });
+    return NextResponse.json({ status: status ?? 'Active', appliedAmount: 0 });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to reset loan';
 

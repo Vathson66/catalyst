@@ -1,6 +1,6 @@
 import { bcManagementBase, bcManagementHeaders } from './auth';
 
-type LoanStatus = 'Active' | 'Under Processing' | 'Used' | string;
+type LoanStatus = 'Active' | 'Under Processing' | 'Used' | (string & {});
 
 interface LoanPortfolio {
   active_loan?: {
@@ -54,7 +54,7 @@ function hasManagementApiConfig(): boolean {
 }
 
 function seededLoanDataEnabled(): boolean {
-  return process.env.LOAN_TEST_DATA !== 'false';
+  return process.env.LOAN_TEST_DATA === 'true';
 }
 
 function parseLoanApprovalFromPortfolio(
@@ -69,9 +69,9 @@ function parseLoanApprovalFromPortfolio(
 
   const status = activeLoan.status ?? null;
   const amount = Number(activeLoan.approved_amount);
-  const visible = status === 'Active' || status === 'Under Processing';
+  const eligible = status === 'Active';
 
-  if (!visible || !Number.isFinite(amount) || amount <= 0) {
+  if (!eligible || !Number.isFinite(amount) || amount <= 0) {
     return {
       approved: false,
       approvedAmount: 0,

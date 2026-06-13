@@ -135,6 +135,10 @@ function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(' ');
 }
 
+function isUsableLoan(loan: CheckoutSession['loan']): boolean {
+  return loan.eligible && loan.status === 'Active' && loan.approvedAmount > 0;
+}
+
 function readNumberValue(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
@@ -610,13 +614,19 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
   // SDK adapter
   const sdkRef = useRef<CheckoutSdkAdapter | null>(null);
 
-  const [useLoan, setUseLoan] = useState(initialLoan.appliedLoan > 0 || session.loan.selected);
+  const initialLoanUsable = isUsableLoan(session.loan);
+  const initialLoanAppliedAmount = initialLoanUsable
+    ? initialLoan.appliedLoan || session.loan.appliedAmount
+    : 0;
+  const [useLoan, setUseLoan] = useState(
+    initialLoanUsable && (initialLoanAppliedAmount > 0 || session.loan.selected),
+  );
   const [loanAmount, setLoanAmount] = useState(
-    Math.min(initialLoan.appliedLoan || session.loan.approvedAmount, session.grandTotal),
+    initialLoanUsable
+      ? Math.min(initialLoanAppliedAmount || session.loan.approvedAmount, session.grandTotal)
+      : 0,
   );
-  const [loanAppliedAmount, setLoanAppliedAmount] = useState(
-    initialLoan.appliedLoan || session.loan.appliedAmount,
-  );
+  const [loanAppliedAmount, setLoanAppliedAmount] = useState(initialLoanAppliedAmount);
   const [loanStatus, setLoanStatus] = useState(session.loan.status);
 
   const applyCustomerLoanSession = useCallback(
@@ -639,11 +649,12 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
 
       const maxLoan = Math.max(0, Math.min(loan.approvedAmount, session.grandTotal));
 
-      if (!loan.eligible || maxLoan <= 0) {
+      if (!isUsableLoan(loan) || maxLoan <= 0) {
         setUseLoan(false);
         setLoanAmount(0);
         setLoanAppliedAmount(0);
         setLoanStatus(loan.status);
+        clearPersistedLoanSelection(session.checkoutId);
 
         return;
       }
@@ -655,7 +666,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
       setLoanStatus(loan.status);
       setUseLoan((previousUseLoan) => previousUseLoan || loan.selected || loan.appliedAmount > 0);
     },
-    [session.grandTotal],
+    [session.checkoutId, session.grandTotal],
   );
 
   useEffect(() => {
@@ -1621,23 +1632,30 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
     Math.min(summarySession.loan.approvedAmount, summarySession.grandTotal),
   );
   const selectedLoanAmount = Math.max(0, Math.min(loanAmount, maxLoanAmount));
-  const showLoanConsent =
-    summarySession.loanEnabled &&
-    summarySession.loan.eligible &&
-    (summarySession.loan.status === 'Active' || summarySession.loan.status === 'Under Processing');
+  const loanUsableForSummary =
+    summarySession.loanEnabled && isUsableLoan(summarySession.loan) && maxLoanAmount > 0;
+  const showLoanConsent = loanUsableForSummary;
   const useLoanForSummary = showLoanConsent && useLoan && selectedLoanAmount > 0;
+  const appliedLoanForSummary = useLoanForSummary ? selectedLoanAmount : 0;
   const summaryLoan: LoanState = {
-    appliedLoan: useLoanForSummary ? selectedLoanAmount : loanAppliedAmount,
-    residual: Math.max(
-      summarySession.grandTotal - (useLoanForSummary ? selectedLoanAmount : loanAppliedAmount),
-      0,
-    ),
+    appliedLoan: appliedLoanForSummary,
+    residual: Math.max(summarySession.grandTotal - appliedLoanForSummary, 0),
   };
 
   useEffect(() => {
+    if (!loanUsableForSummary) {
+      clearPersistedLoanSelection(session.checkoutId);
+      setUseLoan(false);
+      setLoanAmount(0);
+      setLoanAppliedAmount(0);
+      setLoanStatus(summarySession.loan.status);
+
+      return;
+    }
+
     const persistedLoan = readPersistedLoanSelection(session.checkoutId);
 
-    if (!persistedLoan || !summarySession.loan.eligible) {
+    if (!persistedLoan) {
       return;
     }
 
@@ -1646,7 +1664,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
     setUseLoan(persistedLoan.useLoan && persistedAmount > 0);
     setLoanAmount(persistedAmount);
     setLoanAppliedAmount(Math.min(persistedLoan.appliedLoanAmount, maxLoanAmount));
-  }, [maxLoanAmount, session.checkoutId, summarySession.loan.eligible]);
+  }, [loanUsableForSummary, maxLoanAmount, session.checkoutId, summarySession.loan.status]);
 
   useEffect(() => {
     if (!showLoanConsent) {
@@ -3155,7 +3173,7 @@ function PaymentStep({
   );
 
   const maxLoan = Math.min(session.loan.approvedAmount, session.grandTotal);
-  const showLoan = session.loanEnabled && session.loan.eligible;
+  const showLoan = session.loanEnabled && isUsableLoan(session.loan) && maxLoan > 0;
   const dueTodayWithLoan = Math.max(session.grandTotal - loanAmount, 0);
 
   // ── Load payment methods from BigCommerce payment settings ────────────────
@@ -3272,7 +3290,7 @@ function PaymentStep({
             currency: session.currencyCode,
           });
 
-          if (session.loanEnabled && session.loan.eligible && useLoan) {
+          if (showLoan && useLoan) {
             const res = await fetch('/api/checkout/apply-loan', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
