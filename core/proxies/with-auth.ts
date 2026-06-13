@@ -15,6 +15,21 @@ function redirectToLogin(url: string) {
   return NextResponse.redirect(new URL('/login', url), { status: 302 });
 }
 
+function isPrefetchRequest(req: Parameters<Parameters<typeof auth>[0]>[0]) {
+  const purpose = req.headers.get('purpose')?.toLowerCase() ?? '';
+  const secPurpose = req.headers.get('sec-purpose')?.toLowerCase() ?? '';
+
+  return (
+    req.headers.get('next-router-prefetch') === '1' ||
+    purpose.includes('prefetch') ||
+    secPurpose.includes('prefetch')
+  );
+}
+
+function blockProtectedPrefetch() {
+  return new NextResponse(null, { status: 204 });
+}
+
 async function getCheckoutCustomerAccessToken(req: Parameters<Parameters<typeof auth>[0]>[0]) {
   const sessions = await Promise.all(
     resolveCheckoutCustomerCookieNames().map(async (cookieName) => {
@@ -38,9 +53,14 @@ export const withAuth: ProxyFactory = (next) => {
       const anonymousSession = await getAnonymousSession();
       const isProtectedRoute = protectedPathPattern.test(req.nextUrl.toString().toLowerCase());
       const isGetRequest = req.method === 'GET';
+      const isProtectedPrefetch = isProtectedRoute && isGetRequest && isPrefetchRequest(req);
       const checkoutCustomerAccessToken = isProtectedRoute
         ? await getCheckoutCustomerAccessToken(req)
         : undefined;
+
+      if (isProtectedPrefetch && !req.auth && !checkoutCustomerAccessToken) {
+        return blockProtectedPrefetch();
+      }
 
       // Create the anonymous session if it doesn't exist
       if (!req.auth && !anonymousSession) {
@@ -72,6 +92,10 @@ export const withAuth: ProxyFactory = (next) => {
         !customerAccessToken &&
         !checkoutCustomerAccessToken
       ) {
+        if (isProtectedPrefetch) {
+          return blockProtectedPrefetch();
+        }
+
         return redirectToLogin(req.url);
       }
 
