@@ -9,6 +9,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { client } from '~/client';
 import { graphql } from '~/client/graphql';
 
+import { loadCustomerLoanSession } from './loan-session';
+
 function bcBase(): string {
   const hash = process.env.BIGCOMMERCE_STORE_HASH;
   if (!hash) throw new Error('Missing BIGCOMMERCE_STORE_HASH');
@@ -62,7 +64,10 @@ const CheckoutLoginValidationMutation = graphql(`
   }
 `);
 
-async function validateWithStorefrontLogin(email: string, password: string): Promise<number | null> {
+async function validateWithStorefrontLogin(
+  email: string,
+  password: string,
+): Promise<number | null> {
   try {
     const response = await client.fetch({
       document: CheckoutLoginValidationMutation,
@@ -97,6 +102,7 @@ async function buildSuccessResponse(
 ): Promise<NextResponse> {
   const profileRes = await fetch(`${base}/v2/customers/${customerId}`, { headers });
   const profile = profileRes.ok ? ((await profileRes.json()) as BcCustomerV2) : null;
+  const loanSession = await loadCustomerLoanSession(customerId);
 
   const addrRes = await fetch(`${base}/v2/customers/${customerId}/addresses?limit=10`, { headers });
   let addresses: BcAddress[] = [];
@@ -118,6 +124,7 @@ async function buildSuccessResponse(
     lastName: profile?.last_name ?? '',
     email: profile?.email ?? email,
     phone: profile?.phone ?? '',
+    ...loanSession,
     addresses: addresses.map((a) => ({
       id: a.id,
       firstName: a.first_name,

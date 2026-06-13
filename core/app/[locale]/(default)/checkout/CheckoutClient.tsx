@@ -107,6 +107,15 @@ interface CheckoutAuthMeResponse {
   email?: string;
   phone?: string;
   addresses?: SavedAddress[];
+  loan?: CheckoutSession['loan'];
+  loanEnabled?: boolean;
+}
+
+interface CustomerLoanSessionPatch {
+  customerId?: number;
+  email?: string;
+  loan?: CheckoutSession['loan'];
+  loanEnabled?: boolean;
 }
 
 function readStringValue(...values: unknown[]): string {
@@ -599,6 +608,54 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
   // SDK adapter
   const sdkRef = useRef<CheckoutSdkAdapter | null>(null);
 
+  const [useLoan, setUseLoan] = useState(initialLoan.appliedLoan > 0 || session.loan.selected);
+  const [loanAmount, setLoanAmount] = useState(
+    Math.min(initialLoan.appliedLoan || session.loan.approvedAmount, session.grandTotal),
+  );
+  const [loanAppliedAmount, setLoanAppliedAmount] = useState(
+    initialLoan.appliedLoan || session.loan.appliedAmount,
+  );
+  const [loanStatus, setLoanStatus] = useState(session.loan.status);
+
+  const applyCustomerLoanSession = useCallback(
+    ({ customerId, email, loan, loanEnabled }: CustomerLoanSessionPatch) => {
+      if (!loan) {
+        return;
+      }
+
+      setSession((prev) => ({
+        ...prev,
+        customerId: typeof customerId === 'number' && customerId > 0 ? customerId : prev.customerId,
+        customer: {
+          ...prev.customer,
+          isLoggedIn: true,
+          email: email ?? prev.customer.email,
+        },
+        loan,
+        loanEnabled: loanEnabled ?? prev.loanEnabled,
+      }));
+
+      const maxLoan = Math.max(0, Math.min(loan.approvedAmount, session.grandTotal));
+
+      if (!loan.eligible || maxLoan <= 0) {
+        setUseLoan(false);
+        setLoanAmount(0);
+        setLoanAppliedAmount(0);
+        setLoanStatus(loan.status);
+
+        return;
+      }
+
+      setLoanAmount((previousAmount) =>
+        previousAmount > 0 ? Math.min(previousAmount, maxLoan) : maxLoan,
+      );
+      setLoanAppliedAmount(Math.min(loan.appliedAmount, maxLoan));
+      setLoanStatus(loan.status);
+      setUseLoan((previousUseLoan) => previousUseLoan || loan.selected || loan.appliedAmount > 0);
+    },
+    [session.grandTotal],
+  );
+
   useEffect(() => {
     const adapter = new CheckoutSdkAdapter(session.checkoutId, session.storeUrl ?? '');
     sdkRef.current = adapter;
@@ -768,6 +825,12 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
           );
 
         setSignedInCustomer(customer);
+        applyCustomerLoanSession({
+          customerId: customer.customerId,
+          email: customer.email,
+          loan: data.loan,
+          loanEnabled: data.loanEnabled,
+        });
         setFoundCustomer({
           customerId: customer.customerId,
           firstName: customer.firstName,
@@ -820,6 +883,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
       cancelled = true;
     };
   }, [
+    applyCustomerLoanSession,
     checkoutDraftHydrated,
     guestEmail,
     session.customer.email,
@@ -834,15 +898,6 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
 
   const fmt = (n: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: session.currencyCode }).format(n);
-
-  const [useLoan, setUseLoan] = useState(initialLoan.appliedLoan > 0 || session.loan.selected);
-  const [loanAmount, setLoanAmount] = useState(
-    Math.min(initialLoan.appliedLoan || session.loan.approvedAmount, session.grandTotal),
-  );
-  const [loanAppliedAmount, setLoanAppliedAmount] = useState(
-    initialLoan.appliedLoan || session.loan.appliedAmount,
-  );
-  const [loanStatus, setLoanStatus] = useState(session.loan.status);
 
   const handleEmailLookup = useCallback(
     async (rawEmail?: string): Promise<boolean> => {
@@ -983,6 +1038,8 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
         email?: string;
         phone?: string;
         addresses?: SavedAddress[];
+        loan?: CheckoutSession['loan'];
+        loanEnabled?: boolean;
         error?: string;
       };
 
@@ -1002,6 +1059,12 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
         addresses: normalisedAddresses,
       };
       setSignedInCustomer(customer);
+      applyCustomerLoanSession({
+        customerId: customer.customerId,
+        email: customer.email,
+        loan: data.loan,
+        loanEnabled: data.loanEnabled,
+      });
       setFoundCustomer({
         customerId: customer.customerId,
         firstName: customer.firstName,
@@ -1040,7 +1103,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
     } finally {
       setSigningIn(false);
     }
-  }, [guestEmail, signInPassword, showSignIn]);
+  }, [applyCustomerLoanSession, guestEmail, signInPassword, showSignIn]);
 
   const handleContinueAsCustomer = useCallback(() => {
     if (!signedInCustomer) return;
@@ -1265,8 +1328,16 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
           const nextSession = await sdk.selectShippingOption(shippingOptionId);
 
           if (nextSession) {
-            setSession(nextSession);
-            checkoutSessionForHandoff = nextSession;
+            const loanAwareNextSession: CheckoutSession = {
+              ...nextSession,
+              customerId: session.customerId,
+              customer: session.customer,
+              loan: session.loan,
+              loanEnabled: session.loanEnabled,
+            };
+
+            setSession(loanAwareNextSession);
+            checkoutSessionForHandoff = loanAwareNextSession;
           } else {
             const quotedShippingOption = nextShippingOptions.find(
               (option) => option.id === shippingOptionId,
@@ -1311,6 +1382,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   checkoutId: checkoutSessionForHandoff.checkoutId,
+                  customerId: checkoutSessionForHandoff.customerId,
                   requestedAmount,
                 }),
               });
@@ -1397,6 +1469,10 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
       selectedShipping,
       session.checkoutId,
       session.currencyCode,
+      session.customer,
+      session.customerId,
+      session.loan,
+      session.loanEnabled,
       session,
       shippingAddr,
       shippingConfirmed,

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 
 import { auth } from '~/auth';
 
+import { loadCustomerLoanSession } from './loan-session';
+
 function bcBase(): string {
   const hash = process.env.BIGCOMMERCE_STORE_HASH;
 
@@ -110,6 +112,7 @@ export async function GET() {
     }
 
     const customer = customers[0]!;
+    const loanSession = await loadCustomerLoanSession(customer.id);
     const addressRes = await fetch(`${bcBase()}/v2/customers/${customer.id}/addresses?limit=10`, {
       headers: bcHeaders(),
       cache: 'no-store',
@@ -136,6 +139,7 @@ export async function GET() {
       lastName: fallbackLastName || customer.last_name || '',
       email: customer.email || sessionEmail,
       phone: customer.phone || '',
+      ...loanSession,
       addresses: addresses.map((address) => ({
         id: address.id,
         firstName: address.first_name,

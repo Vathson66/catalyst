@@ -6,6 +6,7 @@ import { loadCheckoutSession } from '~/lib/checkout/session';
 
 const ApplyLoanBodySchema = z.object({
   checkoutId: z.string().min(1),
+  customerId: z.number().int().positive().optional(),
   requestedAmount: z.number().positive().optional(),
   customAmount: z.number().positive().optional(),
   useLoan: z.boolean().optional(),
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Loan request payload is invalid' }, { status: 400 });
     }
 
-    const { checkoutId, useLoan } = parseResult.data;
+    const { checkoutId, customerId, useLoan } = parseResult.data;
 
     if (useLoan === false) {
       return NextResponse.json({ appliedAmount: 0, status: 'Active' });
@@ -32,7 +33,7 @@ export async function POST(request: NextRequest) {
     }
 
     const session = await loadCheckoutSession(checkoutId);
-    const loanApproval = await fetchLoanApproval(session.customerId);
+    const loanApproval = await fetchLoanApproval(customerId ?? session.customerId);
     const maxApplicableAmount = Math.min(loanApproval.approvedAmount, session.grandTotal);
 
     if (!loanApproval.approved || loanApproval.status !== 'Active') {
