@@ -46,7 +46,7 @@ async function postCustomerStoreCreditAdjustment(
   }
 
   const res = await fetch(
-    `${bcManagementBase()}/customers/${encodeURIComponent(String(customerId))}/store_credit`,
+    `${bcManagementBase()}/customers/${encodeURIComponent(String(customerId))}/store-credit`,
     {
       method: 'POST',
       headers: bcManagementHeaders(),

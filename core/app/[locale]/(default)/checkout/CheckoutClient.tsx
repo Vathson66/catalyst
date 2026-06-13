@@ -593,11 +593,13 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
   const [shippingOptions, setShippingOptions] = useState<SdkShippingOption[]>([]);
   const [selectedShipping, setSelectedShipping] = useState('');
   const [loadingShippingOpts, setLoadingShippingOpts] = useState(false);
+  const [refreshingFinalTotals, setRefreshingFinalTotals] = useState(false);
   const [submittingShipping, setSubmittingShipping] = useState(false);
   const shippingSubmitLockRef = useRef(false);
   const [checkoutDraftHydrated, setCheckoutDraftHydrated] = useState(false);
   const [redirectingToHostedCheckout, setRedirectingToHostedCheckout] = useState(false);
   const redirectingToHostedCheckoutRef = useRef(false);
+  const finalTotalsRefreshKeyRef = useRef('');
   const sessionCustomerBootstrapRef = useRef(false);
   const customerLookupAbortRef = useRef<AbortController | null>(null);
   const customerLookupSequenceRef = useRef(0);
@@ -1250,6 +1252,104 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
     // Only re-run when we enter the shipping step
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
+
+  useEffect(() => {
+    if (
+      step !== 'shipping' ||
+      !shippingConfirmed ||
+      loadingShippingOpts ||
+      submittingShipping ||
+      redirectingToHostedCheckout ||
+      !selectedShipping ||
+      !hasRequiredShippingAddressFields(shippingAddr) ||
+      (!sameAsShipping && !hasRequiredBillingAddressFields(billingAddr))
+    ) {
+      return;
+    }
+
+    const billing = sameAsShipping ? shippingAddr : billingAddr;
+    const refreshKey = JSON.stringify({
+      checkoutId: session.checkoutId,
+      selectedShipping,
+      sameAsShipping,
+      shippingAddr,
+      billingAddr: billing,
+    });
+
+    if (finalTotalsRefreshKeyRef.current === refreshKey) {
+      return;
+    }
+
+    const sdk = sdkRef.current;
+
+    if (!sdk) {
+      return;
+    }
+
+    let cancelled = false;
+    finalTotalsRefreshKeyRef.current = refreshKey;
+    setRefreshingFinalTotals(true);
+
+    void (async () => {
+      try {
+        let nextSession = await sdk.selectShippingOption(selectedShipping);
+
+        nextSession =
+          (await sdk.updateBillingAddress({
+            firstName: billing.firstName,
+            lastName: billing.lastName,
+            address1: billing.address1,
+            address2: billing.address2 || undefined,
+            city: billing.city,
+            stateOrProvinceCode: billing.state,
+            postalCode: billing.postalCode,
+            countryCode: billing.country,
+            phone: billing.phone || undefined,
+            email: shippingAddr.email || guestEmail,
+          })) ?? nextSession;
+
+        if (!cancelled && nextSession) {
+          setSession((previousSession) => ({
+            ...nextSession,
+            customerId: previousSession.customerId,
+            customer: previousSession.customer,
+            loan: previousSession.loan,
+            loanEnabled: previousSession.loanEnabled,
+          }));
+        }
+      } catch (err) {
+        finalTotalsRefreshKeyRef.current = '';
+
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Could not calculate tax and final total. Please try again.',
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setRefreshingFinalTotals(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    billingAddr,
+    guestEmail,
+    loadingShippingOpts,
+    redirectingToHostedCheckout,
+    sameAsShipping,
+    selectedShipping,
+    session.checkoutId,
+    shippingAddr,
+    shippingConfirmed,
+    step,
+    submittingShipping,
+  ]);
 
   const handleShippingSubmit = useCallback(
     async (e: React.FormEvent<HTMLFormElement>) => {
@@ -2321,6 +2421,12 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
               </p>
             )}
 
+            {refreshingFinalTotals && !redirectingToHostedCheckout && (
+              <p className="lookup-checking">
+                <Spinner /> Calculating tax and final total…
+              </p>
+            )}
+
             {showLoanConsent && (
               <LoanConsent
                 approvedAmount={summarySession.loan.approvedAmount}
@@ -2351,15 +2457,25 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
                 'cta-btn',
                 (submittingShipping || redirectingToHostedCheckout) && 'cta-btn-loading',
               )}
-              disabled={submittingShipping || loadingShippingOpts || redirectingToHostedCheckout}
+              disabled={
+                submittingShipping ||
+                loadingShippingOpts ||
+                refreshingFinalTotals ||
+                redirectingToHostedCheckout
+              }
             >
               {redirectingToHostedCheckout ? (
                 <>
                   <Spinner /> Redirecting to secure hosted checkout…
                 </>
-              ) : submittingShipping || loadingShippingOpts ? (
+              ) : submittingShipping || loadingShippingOpts || refreshingFinalTotals ? (
                 <>
-                  <Spinner /> {shippingConfirmed ? 'Confirming details…' : 'Preparing checkout…'}
+                  <Spinner />{' '}
+                  {refreshingFinalTotals
+                    ? 'Calculating tax…'
+                    : shippingConfirmed
+                      ? 'Confirming details…'
+                      : 'Preparing checkout…'}
                 </>
               ) : HOSTED_CHECKOUT_FLOW_CONFIG.enabled ? (
                 useLoanForSummary ? (
