@@ -6,7 +6,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 
-import { signIn } from '~/auth';
+import { checkoutCustomerSignIn } from '~/auth/checkout-customer-session';
 import { client } from '~/client';
 import { graphql } from '~/client/graphql';
 
@@ -52,30 +52,50 @@ interface BcValidateResponse {
   customer_id: number;
 }
 
+interface StorefrontLoginResult {
+  customerId: number;
+  firstName: string;
+  lastName: string;
+  email: string;
+  customerAccessToken: string;
+  cartId?: string;
+}
+
 const CART_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const CheckoutLoginValidationMutation = graphql(`
-  mutation CheckoutLoginValidationMutation($email: String!, $password: String!) {
-    login(email: $email, password: $password) {
+  mutation CheckoutLoginValidationMutation(
+    $email: String!
+    $password: String!
+    $cartEntityId: String
+  ) {
+    login(email: $email, password: $password, guestCartEntityId: $cartEntityId) {
       customerAccessToken {
         value
       }
       customer {
+        entityId
+        firstName
+        lastName
+        email
+      }
+      cart {
         entityId
       }
     }
   }
 `);
 
-async function validateWithStorefrontLogin(
+async function loginWithStorefrontCredentials(
   email: string,
   password: string,
-): Promise<number | null> {
+  cartId?: string,
+): Promise<StorefrontLoginResult | null> {
   try {
     const response = await client.fetch({
       document: CheckoutLoginValidationMutation,
-      variables: { email, password },
+      variables: { email, password, cartEntityId: cartId },
       channelId: process.env.BIGCOMMERCE_CHANNEL_ID,
       fetchOptions: {
         cache: 'no-store',
@@ -92,7 +112,14 @@ async function validateWithStorefrontLogin(
       return null;
     }
 
-    return result.customer.entityId;
+    return {
+      customerId: result.customer.entityId,
+      firstName: result.customer.firstName,
+      lastName: result.customer.lastName,
+      email: result.customer.email,
+      customerAccessToken: result.customerAccessToken.value,
+      cartId: result.cart?.entityId,
+    };
   } catch {
     return null;
   }
@@ -103,7 +130,7 @@ async function buildSuccessResponse(
   headers: Record<string, string>,
   customerId: number,
   email: string,
-  password: string,
+  storefrontLogin: StorefrontLoginResult,
   cartId?: string,
 ): Promise<NextResponse> {
   const profileRes = await fetch(`${base}/v2/customers/${customerId}`, { headers });
@@ -111,11 +138,12 @@ async function buildSuccessResponse(
   const loanSession = await loadCustomerLoanSession(customerId);
   const authCartId = cartId && CART_ID_PATTERN.test(cartId) ? cartId : undefined;
 
-  await signIn('password', {
-    email,
-    password,
-    cartId: authCartId,
-    redirect: false,
+  await checkoutCustomerSignIn({
+    firstName: storefrontLogin.firstName || profile?.first_name || '',
+    lastName: storefrontLogin.lastName || profile?.last_name || '',
+    email: storefrontLogin.email || profile?.email || email,
+    customerAccessToken: storefrontLogin.customerAccessToken,
+    cartId: storefrontLogin.cartId ?? authCartId,
   });
 
   const addrRes = await fetch(`${base}/v2/customers/${customerId}/addresses?limit=10`, { headers });
@@ -174,6 +202,7 @@ export async function POST(req: NextRequest) {
 
     const base = bcBase();
     const headers = bcHeaders();
+    const authCartId = cartId && CART_ID_PATTERN.test(cartId) ? cartId : undefined;
 
     const validateRes = await fetch(`${base}/v2/customers/validate_credentials`, {
       method: 'POST',
@@ -184,13 +213,20 @@ export async function POST(req: NextRequest) {
     if (validateRes.status === 404) {
       // Never fall back to email-only lookup. If this endpoint is unavailable,
       // validate credentials through Storefront GraphQL login instead.
-      const customerId = await validateWithStorefrontLogin(email, password);
+      const storefrontLogin = await loginWithStorefrontCredentials(email, password, authCartId);
 
-      if (!customerId) {
+      if (!storefrontLogin) {
         return NextResponse.json({ success: false, error: 'Invalid email or password.' });
       }
 
-      return await buildSuccessResponse(base, headers, customerId, email, password, cartId);
+      return await buildSuccessResponse(
+        base,
+        headers,
+        storefrontLogin.customerId,
+        email,
+        storefrontLogin,
+        cartId,
+      );
     }
 
     if (validateRes.status === 204 || !validateRes.ok) {
@@ -202,12 +238,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid email or password.' });
     }
 
+    const storefrontLogin = await loginWithStorefrontCredentials(email, password, authCartId);
+
+    if (!storefrontLogin) {
+      return NextResponse.json({
+        success: false,
+        error: 'Your credentials were validated, but storefront login could not be established.',
+      });
+    }
+
     return await buildSuccessResponse(
       base,
       headers,
       validateData.customer_id,
       email,
-      password,
+      storefrontLogin,
       cartId,
     );
   } catch (err) {

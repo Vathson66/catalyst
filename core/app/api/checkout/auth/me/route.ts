@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { auth } from '~/auth';
+import { auth, getCheckoutCustomerSession } from '~/auth';
 
 import { loadCustomerLoanSession } from '../loan-session';
 
@@ -54,14 +54,16 @@ interface BcAddress {
 export async function GET() {
   try {
     const session = await auth();
-    const sessionEmail = session?.user?.email?.trim().toLowerCase();
+    const checkoutCustomerSession = await getCheckoutCustomerSession();
+    const sessionUser = session?.user ?? checkoutCustomerSession?.user;
+    const sessionEmail = sessionUser?.email?.trim().toLowerCase();
 
     if (!sessionEmail) {
       return NextResponse.json({ authenticated: false });
     }
 
-    const fallbackFirstName = session?.user?.firstName ?? '';
-    const fallbackLastName = session?.user?.lastName ?? '';
+    const fallbackFirstName = sessionUser?.firstName ?? '';
+    const fallbackLastName = sessionUser?.lastName ?? '';
 
     const customerLookupRes = await fetch(
       `${bcBase()}/v2/customers?email=${encodeURIComponent(sessionEmail)}&limit=1`,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { auth } from '~/auth';
+import { auth, getCheckoutCustomerSession } from '~/auth';
 import { generateCustomerLoginApiJwt } from '~/auth/customer-login-api';
 
 interface BcCustomer {
@@ -317,7 +317,10 @@ export async function POST(req: NextRequest) {
     }
 
     const session = await auth();
-    const sessionEmail = session?.user?.email?.trim().toLowerCase();
+    const checkoutCustomerSession = await getCheckoutCustomerSession();
+    const sessionEmail = (session?.user?.email ?? checkoutCustomerSession?.user?.email)
+      ?.trim()
+      .toLowerCase();
 
     if (!sessionEmail) {
       return NextResponse.json({

@@ -2,7 +2,13 @@
 
 import { revalidateTag } from 'next/cache';
 
-import { auth, getAnonymousSession, updateAnonymousSession, updateSession } from '~/auth';
+import {
+  auth,
+  getAnonymousSession,
+  getCheckoutCustomerSession,
+  updateAnonymousSession,
+  updateSession,
+} from '~/auth';
 import { TAGS } from '~/client/tags';
 import { addCartLineItem, AddCartLineItemsInput } from '~/lib/cart/add-cart-line-item';
 import { createCart, CreateCartInput } from '~/lib/cart/create-cart';
@@ -19,7 +25,13 @@ export async function getCartId(): Promise<string | undefined> {
 
   const session = await auth();
 
-  return session?.user?.cartId ?? undefined;
+  if (session?.user?.cartId) {
+    return session.user.cartId;
+  }
+
+  const checkoutCustomerSession = await getCheckoutCustomerSession();
+
+  return checkoutCustomerSession?.user?.cartId ?? undefined;
 }
 
 export async function setCartId(cartId: string): Promise<void> {

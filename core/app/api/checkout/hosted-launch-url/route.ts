@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
-import { auth } from '~/auth';
+import { auth, getCheckoutCustomerSession } from '~/auth';
 import { generateCustomerLoginApiJwt } from '~/auth/customer-login-api';
 import { signHostedCheckoutHandoffToken } from '~/lib/checkout/hosted-handoff-token';
 import { signCheckoutReturnToken } from '~/lib/checkout/return-token';
@@ -304,7 +304,10 @@ async function buildHostedLaunchUrl(
   }
 
   const session = await auth();
-  const sessionEmail = session?.user?.email?.trim().toLowerCase();
+  const checkoutCustomerSession = await getCheckoutCustomerSession();
+  const sessionEmail = (session?.user?.email ?? checkoutCustomerSession?.user?.email)
+    ?.trim()
+    .toLowerCase();
 
   if (!sessionEmail) {
     return hostedCheckoutUrl;

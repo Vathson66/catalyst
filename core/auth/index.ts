@@ -6,6 +6,10 @@ import { getTranslations } from 'next-intl/server';
 import { z } from 'zod';
 
 import { anonymousSignIn, clearAnonymousSession } from '~/auth/anonymous-session';
+import {
+  clearCheckoutCustomerSession,
+  getCheckoutCustomerSession,
+} from '~/auth/checkout-customer-session';
 import { client } from '~/client';
 import { graphql } from '~/client/graphql';
 import { clearCartId, setCartId } from '~/lib/cart';
@@ -306,6 +310,8 @@ const config = {
           console.error(error);
         }
       }
+
+      await clearCheckoutCustomerSession();
     },
   },
   providers: [
@@ -345,9 +351,17 @@ export const getSessionCustomerAccessToken = async () => {
   try {
     const session = await auth();
 
-    return session?.user?.customerAccessToken;
+    if (session?.user?.customerAccessToken) {
+      return session.user.customerAccessToken;
+    }
+
+    const checkoutCustomerSession = await getCheckoutCustomerSession();
+
+    return checkoutCustomerSession?.user?.customerAccessToken;
   } catch {
-    // No empty
+    const checkoutCustomerSession = await getCheckoutCustomerSession();
+
+    return checkoutCustomerSession?.user?.customerAccessToken;
   }
 };
 
@@ -363,3 +377,8 @@ export {
   getAnonymousSession,
   updateAnonymousSession,
 } from './anonymous-session';
+
+export {
+  clearCheckoutCustomerSession,
+  getCheckoutCustomerSession,
+} from './checkout-customer-session';
