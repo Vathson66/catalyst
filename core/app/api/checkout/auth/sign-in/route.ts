@@ -6,6 +6,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 
+import { generateCustomerLoginApiJwt } from '~/auth/customer-login-api';
 import { client } from '~/client';
 import { graphql } from '~/client/graphql';
 
@@ -21,6 +22,13 @@ function bcHeaders(): Record<string, string> {
   const token = process.env.BC_MANAGEMENT_TOKEN;
   if (!token) throw new Error('Missing BC_MANAGEMENT_TOKEN');
   return { 'X-Auth-Token': token, 'Content-Type': 'application/json', Accept: 'application/json' };
+}
+
+function resolveChannelId(): number {
+  const raw = process.env.BIGCOMMERCE_CHANNEL_ID?.trim();
+  const parsed = raw ? Number(raw) : 1;
+
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
 interface BcAddress {
@@ -103,6 +111,7 @@ async function buildSuccessResponse(
   const profileRes = await fetch(`${base}/v2/customers/${customerId}`, { headers });
   const profile = profileRes.ok ? ((await profileRes.json()) as BcCustomerV2) : null;
   const loanSession = await loadCustomerLoanSession(customerId);
+  const authJwt = await generateCustomerLoginApiJwt(customerId, resolveChannelId(), '/account');
 
   const addrRes = await fetch(`${base}/v2/customers/${customerId}/addresses?limit=10`, { headers });
   let addresses: BcAddress[] = [];
@@ -124,6 +133,7 @@ async function buildSuccessResponse(
     lastName: profile?.last_name ?? '',
     email: profile?.email ?? email,
     phone: profile?.phone ?? '',
+    authJwt,
     ...loanSession,
     addresses: addresses.map((a) => ({
       id: a.id,

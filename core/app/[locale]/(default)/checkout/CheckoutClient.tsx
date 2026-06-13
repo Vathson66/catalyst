@@ -1041,6 +1041,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
         addresses?: SavedAddress[];
         loan?: CheckoutSession['loan'];
         loanEnabled?: boolean;
+        authJwt?: string;
         error?: string;
       };
 
@@ -1049,9 +1050,13 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
         return;
       }
 
-      const authResult = await signInWithAuth('password', {
-        email: guestEmail,
-        password: signInPassword,
+      if (!data.authJwt) {
+        setError('Could not keep you signed in across the storefront. Please try again.');
+        return;
+      }
+
+      const authResult = await signInWithAuth('jwt', {
+        jwt: data.authJwt,
         cartId: session.cartId,
         redirect: false,
       });
