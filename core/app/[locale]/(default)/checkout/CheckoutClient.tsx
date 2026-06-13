@@ -1,6 +1,5 @@
 'use client';
 
-import { signIn as signInWithAuth } from 'next-auth/react';
 import { useLocale } from 'next-intl';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -1029,7 +1028,11 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
       const res = await fetch('/api/checkout/auth/sign-in', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: guestEmail, password: signInPassword }),
+        body: JSON.stringify({
+          email: guestEmail,
+          password: signInPassword,
+          cartId: session.cartId,
+        }),
       });
       const data = (await res.json()) as {
         success?: boolean;
@@ -1041,7 +1044,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
         addresses?: SavedAddress[];
         loan?: CheckoutSession['loan'];
         loanEnabled?: boolean;
-        authJwt?: string;
+        authPersisted?: boolean;
         error?: string;
       };
 
@@ -1050,18 +1053,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
         return;
       }
 
-      if (!data.authJwt) {
-        setError('Could not keep you signed in across the storefront. Please try again.');
-        return;
-      }
-
-      const authResult = await signInWithAuth('jwt', {
-        jwt: data.authJwt,
-        cartId: session.cartId,
-        redirect: false,
-      });
-
-      if (authResult?.error) {
+      if (!data.authPersisted) {
         setError('Could not keep you signed in across the storefront. Please try again.');
         return;
       }

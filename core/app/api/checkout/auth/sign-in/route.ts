@@ -6,6 +6,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 
+import { signIn } from '~/auth';
 import { generateCustomerLoginApiJwt } from '~/auth/customer-login-api';
 import { client } from '~/client';
 import { graphql } from '~/client/graphql';
@@ -59,6 +60,9 @@ interface BcValidateResponse {
   customer_id: number;
 }
 
+const CART_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 const CheckoutLoginValidationMutation = graphql(`
   mutation CheckoutLoginValidationMutation($email: String!, $password: String!) {
     login(email: $email, password: $password) {
@@ -107,11 +111,19 @@ async function buildSuccessResponse(
   headers: Record<string, string>,
   customerId: number,
   email: string,
+  cartId?: string,
 ): Promise<NextResponse> {
   const profileRes = await fetch(`${base}/v2/customers/${customerId}`, { headers });
   const profile = profileRes.ok ? ((await profileRes.json()) as BcCustomerV2) : null;
   const loanSession = await loadCustomerLoanSession(customerId);
   const authJwt = await generateCustomerLoginApiJwt(customerId, resolveChannelId(), '/account');
+  const authCartId = cartId && CART_ID_PATTERN.test(cartId) ? cartId : undefined;
+
+  await signIn('jwt', {
+    jwt: authJwt,
+    cartId: authCartId,
+    redirect: false,
+  });
 
   const addrRes = await fetch(`${base}/v2/customers/${customerId}/addresses?limit=10`, { headers });
   let addresses: BcAddress[] = [];
@@ -133,7 +145,7 @@ async function buildSuccessResponse(
     lastName: profile?.last_name ?? '',
     email: profile?.email ?? email,
     phone: profile?.phone ?? '',
-    authJwt,
+    authPersisted: true,
     ...loanSession,
     addresses: addresses.map((a) => ({
       id: a.id,
@@ -155,9 +167,10 @@ async function buildSuccessResponse(
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { email?: string; password?: string };
+    const body = (await req.json()) as { email?: string; password?: string; cartId?: string };
     const email = body.email?.trim().toLowerCase();
     const password = body.password;
+    const cartId = body.cartId?.trim();
 
     if (!email || !email.includes('@')) {
       return NextResponse.json({ error: 'Valid email required' }, { status: 400 });
@@ -184,7 +197,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: false, error: 'Invalid email or password.' });
       }
 
-      return await buildSuccessResponse(base, headers, customerId, email);
+      return await buildSuccessResponse(base, headers, customerId, email, cartId);
     }
 
     if (validateRes.status === 204 || !validateRes.ok) {
@@ -196,7 +209,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid email or password.' });
     }
 
-    return await buildSuccessResponse(base, headers, validateData.customer_id, email);
+    return await buildSuccessResponse(base, headers, validateData.customer_id, email, cartId);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
