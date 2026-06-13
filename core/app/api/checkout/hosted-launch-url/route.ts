@@ -28,6 +28,7 @@ const HostedLaunchUrlBodySchema = z.object({
   localePrefix: z.string().max(32).optional(),
   email: z.string().optional(),
   currency: z.string().optional(),
+  carryCustomerIdentity: z.boolean().optional(),
   paymentOnly: z.boolean().optional(),
   paymentMethod: PaymentMethodSchema,
 });
@@ -77,10 +78,7 @@ async function delay(ms: number): Promise<void> {
   });
 }
 
-async function requestRedirectUrl(
-  checkoutId: string,
-  handoffToken: string,
-): Promise<string> {
+async function requestRedirectUrl(checkoutId: string, handoffToken: string): Promise<string> {
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= BC_REDIRECT_MAX_ATTEMPTS; attempt += 1) {
@@ -107,14 +105,12 @@ async function requestRedirectUrl(
       );
 
       // eslint-disable-next-line no-await-in-loop
-      const payload = (await response.json().catch(() => null)) as
-        | {
-            data?: {
-              checkout_url?: string;
-              embedded_checkout_url?: string;
-            };
-          }
-        | null;
+      const payload = (await response.json().catch(() => null)) as {
+        data?: {
+          checkout_url?: string;
+          embedded_checkout_url?: string;
+        };
+      } | null;
 
       const checkoutUrl = payload?.data?.checkout_url ?? payload?.data?.embedded_checkout_url;
 
@@ -302,6 +298,11 @@ async function buildHostedLaunchUrl(
     paymentOnly,
     request.paymentMethod,
   );
+
+  if (request.carryCustomerIdentity === false) {
+    return hostedCheckoutUrl;
+  }
+
   const session = await auth();
   const sessionEmail = session?.user?.email?.trim().toLowerCase();
 
@@ -340,9 +341,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ launchUrl });
   } catch (error) {
     const message =
-      error instanceof Error
-        ? error.message
-        : 'Unable to prepare secure hosted checkout handoff';
+      error instanceof Error ? error.message : 'Unable to prepare secure hosted checkout handoff';
 
     console.error(`[checkout-hosted-launch-url] ${message}`);
 

@@ -1440,6 +1440,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
             localePrefix,
             email: shippingAddr.email || guestEmail,
             currency: checkoutSessionForHandoff.currencyCode,
+            carryCustomerIdentity: Boolean(signedInCustomer),
             returnToken,
           };
           const handoffRequest = buildHostedCheckoutHandoffTokenRequest(
@@ -1459,6 +1460,7 @@ export function CheckoutClient({ session: initialSession, initialLoan }: Props) 
           const hostedLaunchUrl = await resolveHostedLaunchUrl(
             hostedCheckoutUrl,
             checkoutSessionForHandoff.checkoutId,
+            Boolean(signedInCustomer),
           );
 
           window.location.assign(hostedLaunchUrl);
@@ -3695,6 +3697,7 @@ interface HostedLaunchUrlRequest {
   localePrefix: string;
   email?: string;
   currency?: string;
+  carryCustomerIdentity?: boolean;
   paymentOnly?: boolean;
   paymentMethod?: {
     id?: string;
@@ -3884,13 +3887,17 @@ function MethodRadio({ checked, onChange, label, children }: MethodRadioProps) {
   );
 }
 
-async function resolveHostedLaunchUrl(checkoutUrl: string, checkoutId: string): Promise<string> {
+async function resolveHostedLaunchUrl(
+  checkoutUrl: string,
+  checkoutId: string,
+  carryCustomerIdentity: boolean,
+): Promise<string> {
   const response = await fetch('/api/checkout/auth/hosted-login-url', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ checkoutUrl, checkoutId }),
+    body: JSON.stringify({ checkoutUrl, checkoutId, carryCustomerIdentity }),
   });
 
   const payload = await parseHostedLaunchUrlResponse(response);

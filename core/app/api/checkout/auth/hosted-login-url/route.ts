@@ -11,6 +11,7 @@ interface BcCustomer {
 interface HostedLoginUrlRequest {
   checkoutUrl?: string;
   checkoutId?: string;
+  carryCustomerIdentity?: boolean;
 }
 
 interface RedirectUrlsResponse {
@@ -102,12 +103,7 @@ function resolveCheckoutIdFromUrl(checkoutUrl: URL): string | undefined {
   for (let index = pathSegments.length - 1; index >= 0; index -= 1) {
     const segment = pathSegments[index];
 
-    if (
-      segment &&
-      isValidCheckoutId(segment) &&
-      segment.length >= 8 &&
-      /\d/.test(segment)
-    ) {
+    if (segment && isValidCheckoutId(segment) && segment.length >= 8 && /\d/.test(segment)) {
       return segment;
     }
   }
@@ -189,10 +185,7 @@ async function resolveCheckoutHostsFromBigCommerce(checkoutId: string): Promise<
   return hosts;
 }
 
-function reconcileCheckoutUrl(
-  trustedCheckoutUrl: URL,
-  requestedCheckoutUrl: URL,
-): URL {
+function reconcileCheckoutUrl(trustedCheckoutUrl: URL, requestedCheckoutUrl: URL): URL {
   const reconciled = new URL(trustedCheckoutUrl.toString());
 
   for (const [key, value] of requestedCheckoutUrl.searchParams.entries()) {
@@ -302,6 +295,7 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as HostedLoginUrlRequest;
     const checkoutUrlRaw = body.checkoutUrl?.trim();
     const checkoutIdRaw = body.checkoutId?.trim();
+    const carryCustomerIdentity = body.carryCustomerIdentity !== false;
 
     if (!checkoutUrlRaw) {
       return NextResponse.json({ error: 'checkoutUrl is required' }, { status: 400 });
@@ -314,6 +308,14 @@ export async function POST(req: NextRequest) {
     const checkoutUrl = parseCheckoutUrl(checkoutUrlRaw);
     const checkoutId = checkoutIdRaw || resolveCheckoutIdFromUrl(checkoutUrl);
     const trustedCheckoutUrl = await resolveTrustedCheckoutUrl(checkoutUrl, checkoutId);
+
+    if (!carryCustomerIdentity) {
+      return NextResponse.json({
+        launchUrl: trustedCheckoutUrl.toString(),
+        identityCarried: false,
+      });
+    }
+
     const session = await auth();
     const sessionEmail = session?.user?.email?.trim().toLowerCase();
 
