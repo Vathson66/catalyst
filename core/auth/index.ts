@@ -108,6 +108,7 @@ async function loginWithPassword(credentials: unknown): Promise<User | null> {
   const response = await client.fetch({
     document: LoginMutation,
     variables: { email, password, cartEntityId: cartId },
+    channelId: process.env.BIGCOMMERCE_CHANNEL_ID,
     fetchOptions: {
       cache: 'no-store',
     },

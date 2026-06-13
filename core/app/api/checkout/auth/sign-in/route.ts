@@ -7,7 +7,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { signIn } from '~/auth';
-import { generateCustomerLoginApiJwt } from '~/auth/customer-login-api';
 import { client } from '~/client';
 import { graphql } from '~/client/graphql';
 
@@ -23,13 +22,6 @@ function bcHeaders(): Record<string, string> {
   const token = process.env.BC_MANAGEMENT_TOKEN;
   if (!token) throw new Error('Missing BC_MANAGEMENT_TOKEN');
   return { 'X-Auth-Token': token, 'Content-Type': 'application/json', Accept: 'application/json' };
-}
-
-function resolveChannelId(): number {
-  const raw = process.env.BIGCOMMERCE_CHANNEL_ID?.trim();
-  const parsed = raw ? Number(raw) : 1;
-
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
 interface BcAddress {
@@ -111,16 +103,17 @@ async function buildSuccessResponse(
   headers: Record<string, string>,
   customerId: number,
   email: string,
+  password: string,
   cartId?: string,
 ): Promise<NextResponse> {
   const profileRes = await fetch(`${base}/v2/customers/${customerId}`, { headers });
   const profile = profileRes.ok ? ((await profileRes.json()) as BcCustomerV2) : null;
   const loanSession = await loadCustomerLoanSession(customerId);
-  const authJwt = await generateCustomerLoginApiJwt(customerId, resolveChannelId(), '/account');
   const authCartId = cartId && CART_ID_PATTERN.test(cartId) ? cartId : undefined;
 
-  await signIn('jwt', {
-    jwt: authJwt,
+  await signIn('password', {
+    email,
+    password,
     cartId: authCartId,
     redirect: false,
   });
@@ -197,7 +190,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: false, error: 'Invalid email or password.' });
       }
 
-      return await buildSuccessResponse(base, headers, customerId, email, cartId);
+      return await buildSuccessResponse(base, headers, customerId, email, password, cartId);
     }
 
     if (validateRes.status === 204 || !validateRes.ok) {
@@ -209,7 +202,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid email or password.' });
     }
 
-    return await buildSuccessResponse(base, headers, validateData.customer_id, email, cartId);
+    return await buildSuccessResponse(
+      base,
+      headers,
+      validateData.customer_id,
+      email,
+      password,
+      cartId,
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
