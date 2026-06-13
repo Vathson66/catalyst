@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { client } from '~/client';
 import { graphql } from '~/client/graphql';
 
-import { loadCustomerLoanSession } from './loan-session';
+import { loadCustomerLoanSession } from '../loan-session';
 
 function bcBase(): string {
   const hash = process.env.BIGCOMMERCE_STORE_HASH;
