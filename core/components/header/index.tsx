@@ -32,19 +32,24 @@ const GetCartCountQuery = graphql(`
 `);
 
 const getCartCount = cache(async (cartId: string, customerAccessToken?: string) => {
-  const response = await client.fetch({
-    document: GetCartCountQuery,
-    variables: { cartId },
-    customerAccessToken,
-    fetchOptions: {
-      cache: 'no-store',
-      next: {
-        tags: [TAGS.cart],
+  try {
+    const response = await client.fetch({
+      document: GetCartCountQuery,
+      variables: { cartId },
+      customerAccessToken,
+      validateCustomerAccessToken: false,
+      fetchOptions: {
+        cache: 'no-store',
+        next: {
+          tags: [TAGS.cart],
+        },
       },
-    },
-  });
+    });
 
-  return response.data.site.cart?.lineItems.totalQuantity ?? null;
+    return response.data.site.cart?.lineItems.totalQuantity ?? null;
+  } catch {
+    return null;
+  }
 });
 
 const getHeaderLinks = cache(async (customerAccessToken?: string, currencyCode?: CurrencyCode) => {
