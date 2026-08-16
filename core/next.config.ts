@@ -67,6 +67,17 @@ export default async (): Promise<NextConfig> => {
     experimental: {
       optimizePackageImports: ['@icons-pack/react-simple-icons'],
     },
+    // Integer Slate: the boundary route reads content/pages/<slug>.json at request time, with
+    // the path built from the slug. Next traces bundled files statically, so a dynamically
+    // constructed path is invisible to it and content/ would be missing from the serverless
+    // function — every Slate page 404s in production while working perfectly locally.
+    // Keys are matched against the page path as Next reports it in the build output, where
+    // route groups are stripped — so the key is `/[locale]/slate/[...rest]`, NOT the on-disk
+    // path containing `(default)`. Getting that wrong fails silently: the build succeeds, the
+    // config appears set, and the files still are not bundled. The glob is kept as a belt.
+    outputFileTracingIncludes: {
+      '/[locale]/slate/[...rest]': ['./content/**/*'],
+    },
     typescript: {
       ignoreBuildErrors: !!process.env.CI,
     },
