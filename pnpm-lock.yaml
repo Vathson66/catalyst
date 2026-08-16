@@ -57,8 +57,8 @@ importers:
         specifier: ^11.2.0
         version: 11.2.0(react@19.1.5)
       '@integer/slate-runtime':
-        specifier: file:../vendor/integer-slate-runtime-0.3.0.tgz
-        version: file:vendor/integer-slate-runtime-0.3.0.tgz(react@19.1.5)
+        specifier: file:../vendor/integer-slate-runtime-0.3.0-0b1a6ac3.tgz
+        version: file:vendor/integer-slate-runtime-0.3.0-0b1a6ac3.tgz(react@19.1.5)
       '@makeswift/runtime':
         specifier: 0.26.4
         version: 0.26.4(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(next@16.1.6(@babel/core@7.27.4)(@opentelemetry/api@1.9.0)(@playwright/test@1.52.0)(babel-plugin-macros@3.1.0)(react-dom@19.1.5(react@19.1.5))(react@19.1.5))(react-dom@19.1.5(react@19.1.5))(react@19.1.5)
@@ -2475,8 +2475,8 @@ packages:
       '@types/node':
         optional: true
 
-  '@integer/slate-runtime@file:vendor/integer-slate-runtime-0.3.0.tgz':
-    resolution: {integrity: sha512-fWntJF46bZkWk+iEeINMjFV9MXppCfTt/CIEPhk8Yi5y9WtRPmeEIDMgKGMGedaXd8UY683+I7sZ0sK0tj3icw==, tarball: file:vendor/integer-slate-runtime-0.3.0.tgz}
+  '@integer/slate-runtime@file:vendor/integer-slate-runtime-0.3.0-0b1a6ac3.tgz':
+    resolution: {integrity: sha512-fWntJF46bZkWk+iEeINMjFV9MXppCfTt/CIEPhk8Yi5y9WtRPmeEIDMgKGMGedaXd8UY683+I7sZ0sK0tj3icw==, tarball: file:vendor/integer-slate-runtime-0.3.0-0b1a6ac3.tgz}
     version: 0.3.0
     peerDependencies:
       react: '>=18'
@@ -13810,7 +13810,7 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.15.30
 
-  '@integer/slate-runtime@file:vendor/integer-slate-runtime-0.3.0.tgz(react@19.1.5)':
+  '@integer/slate-runtime@file:vendor/integer-slate-runtime-0.3.0-0b1a6ac3.tgz(react@19.1.5)':
     dependencies:
       react: 19.1.5
       sanitize-html: 2.17.7
