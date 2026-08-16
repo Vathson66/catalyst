@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "id": "page_home",
+  "kind": "page",
+  "slug": "/home",
+  "title": "Integer Slate — live layout",
+  "tree": {
+    "id": "n_root",
+    "type": "section",
+    "settings": {
+      "maxWidth": "contained",
+      "padding": { "token": "space.lg" }
+    },
+    "children": [
+      {
+        "id": "n_hero",
+        "type": "hero",
+        "settings": {
+          "heading": "BASE PAGE — where building meets science",
+          "subheading": "This is content/pages/home.json. It renders because the file exists in the repo, with nothing fetched from Integer infrastructure.",
+          "background": { "token": "brand.primary" },
+          "padding": { "token": "space.lg" }
+        }
+      },
+      {
+        "id": "n_body",
+        "type": "richText",
+        "settings": {
+          "body": "If a scheduled variant of this page exists and its activeFrom has passed, the storefront will render that instead — with no deploy and no builder involved.\n\nThat swap is the whole point of Phase 3.",
+          "maxWidth": "prose"
+        }
+      },
+      {
+        "id": "n_cta",
+        "type": "ctaBand",
+        "settings": {
+          "heading": "Rendered by @integer/slate-runtime",
+          "buttonLabel": "Back to store",
+          "buttonHref": "/",
+          "padding": { "token": "space.md" }
+        }
+      }
+    ]
+  }
+}
