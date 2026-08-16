@@ -1,0 +1,156 @@
+{
+  "schemaVersion": "1.0",
+  "id": "page_landing",
+  "kind": "page",
+  "slug": "/landing",
+  "title": "Sealed for good — protective treatments",
+  "seo": {
+    "title": "Sealed for good | Protective treatments",
+    "description": "A realistic marketing landing page composed entirely from Integer Slate components."
+  },
+  "tree": {
+    "id": "n_root",
+    "type": "section",
+    "settings": {
+      "maxWidth": "full",
+      "padding": { "token": "space.none" }
+    },
+    "children": [
+      {
+        "id": "n_band1",
+        "type": "section",
+        "settings": {
+          "maxWidth": "contained",
+          "padding": { "desktop": { "token": "space.xl" }, "mobile": { "token": "space.md" } },
+          "background": { "token": "brand.primary" }
+        },
+        "children": [
+          {
+            "id": "n_hero",
+            "type": "hero",
+            "settings": {
+              "heading": "Sealed for good.",
+              "subheading": "Breathable protective treatments for masonry, concrete and natural stone. Specified by architects, trusted on site.",
+              "headingType": { "token": "type.display" },
+              "align": "center"
+            }
+          },
+          {
+            "id": "n_herocta",
+            "type": "ctaBand",
+            "settings": {
+              "heading": "",
+              "buttonLabel": "Browse the range",
+              "buttonHref": "/",
+              "padding": { "token": "space.md" }
+            }
+          }
+        ]
+      },
+      {
+        "id": "n_band2",
+        "type": "section",
+        "settings": {
+          "maxWidth": "contained",
+          "padding": { "desktop": { "token": "space.xl" }, "mobile": { "token": "space.md" } }
+        },
+        "children": [
+          {
+            "id": "n_why",
+            "type": "featureGrid",
+            "settings": {
+              "heading": "Why specifiers choose it",
+              "columns": { "desktop": 3, "tablet": 2, "mobile": 1 },
+              "gap": { "token": "space.lg" },
+              "items": [
+                {
+                  "title": "Breathable",
+                  "body": "Water vapour escapes while liquid water is repelled, so the substrate dries rather than trapping moisture behind a film."
+                },
+                {
+                  "title": "Invisible finish",
+                  "body": "Penetrates rather than coating. No gloss, no colour shift, no plastic sheen on natural stone."
+                },
+                {
+                  "title": "Ten-year performance",
+                  "body": "Independently tested for freeze-thaw and salt resistance across the full masonry range."
+                },
+                {
+                  "title": "Single flood coat",
+                  "body": "One application, wet-on-wet. No primer, no second visit, no scaffolding hire twice."
+                },
+                {
+                  "title": "Low VOC",
+                  "body": "Water-based chemistry that meets current site and environmental requirements without a variance."
+                },
+                {
+                  "title": "Documented",
+                  "body": "Safety data sheets, technical bulletins and coverage tables published for every product."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "n_band3",
+        "type": "section",
+        "settings": {
+          "maxWidth": "narrow",
+          "padding": { "token": "space.xl" },
+          "background": { "token": "neutral.light" }
+        },
+        "children": [
+          {
+            "id": "n_case",
+            "type": "richText",
+            "settings": {
+              "body": "\"We had spalling on the north elevation within two winters of the previous treatment. Four years after switching, the same elevation is unchanged.\"\n\nThe difference is penetration depth. A surface film fails at the first freeze-thaw cycle that gets behind it; a penetrating treatment has nothing to lift.",
+              "maxWidth": "prose",
+              "textType": { "token": "type.body" }
+            }
+          }
+        ]
+      },
+      {
+        "id": "n_band4",
+        "type": "section",
+        "settings": {
+          "maxWidth": "contained",
+          "padding": { "token": "space.xl" }
+        },
+        "children": [
+          {
+            "id": "n_range",
+            "type": "productCarousel",
+            "settings": {
+              "heading": "Popular in this range",
+              "limit": 8
+            }
+          }
+        ]
+      },
+      {
+        "id": "n_band5",
+        "type": "section",
+        "settings": {
+          "maxWidth": "contained",
+          "padding": { "token": "space.xl" },
+          "background": { "token": "brand.accent" }
+        },
+        "children": [
+          {
+            "id": "n_final",
+            "type": "ctaBand",
+            "settings": {
+              "heading": "Not sure which product the substrate needs?",
+              "buttonLabel": "Talk to a specifier",
+              "buttonHref": "/",
+              "padding": { "token": "space.md" }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
