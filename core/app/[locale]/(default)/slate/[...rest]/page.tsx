@@ -5,9 +5,12 @@ import {
   createEnvironment,
   emptyDataSource,
   RenderPage,
+  SlateBaseStyles,
+  SlateTokens,
 } from '@integer/slate-runtime';
 
 import { loadLayoutForPath } from '~/lib/slate/load-layout';
+import { loadTokens } from '~/lib/slate/tokens';
 
 /**
  * Integer Slate boundary route (Phase 3 proof).
@@ -51,9 +54,18 @@ export default async function SlatePage({ params }: { params: Promise<PageParams
   const { rest } = await params;
   const slug = `/${(rest ?? []).join('/')}`;
 
-  const document = await loadLayoutForPath(slug);
+  const [document, tokens] = await Promise.all([loadLayoutForPath(slug), loadTokens()]);
 
   if (!document) notFound();
 
-  return <RenderPage document={document} env={env} />;
+  return (
+    <>
+      {/* The client's brand, as CSS custom properties. Scoped to :root so nested nodes inherit. */}
+      <SlateTokens tokens={tokens} />
+      {/* Baseline presentation for the built-in components — every value falls back, so this
+          renders coherently even before tokens exist. */}
+      <SlateBaseStyles />
+      <RenderPage document={document} env={env} />
+    </>
+  );
 }

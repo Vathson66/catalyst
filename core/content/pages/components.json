@@ -1,0 +1,148 @@
+{
+  "schemaVersion": "1.0",
+  "id": "page_components",
+  "kind": "page",
+  "slug": "/components",
+  "title": "Every built-in component",
+  "seo": {
+    "title": "Integer Slate — component reference",
+    "description": "One page exercising every component in the built-in library."
+  },
+  "tree": {
+    "id": "n_root",
+    "type": "section",
+    "settings": {
+      "maxWidth": "contained",
+      "padding": { "token": "space.lg" },
+      "background": { "token": "neutral.light" }
+    },
+    "children": [
+      {
+        "id": "n_hero",
+        "type": "hero",
+        "settings": {
+          "heading": "Every component, one page",
+          "subheading": "Each block below is a registered component rendered from JSON. Nothing here is hand-written HTML.",
+          "background": { "token": "brand.primary" },
+          "headingType": { "token": "type.display" },
+          "padding": { "desktop": { "token": "space.lg" }, "mobile": { "token": "space.sm" } },
+          "align": "left"
+        }
+      },
+      {
+        "id": "n_intro",
+        "type": "richText",
+        "settings": {
+          "body": "This page is content/pages/components.json in the storefront repo. The renderer walks the JSON tree, resolves design tokens to CSS custom properties, and emits per-node scoped CSS for anything responsive.\n\nEvery colour, space and type value you see comes from content/config/tokens.json — change that file and this page restyles without being edited.",
+          "maxWidth": "prose",
+          "textType": { "token": "type.body" }
+        }
+      },
+      {
+        "id": "n_grid",
+        "type": "featureGrid",
+        "settings": {
+          "heading": "Feature grid — three across, stacking on mobile",
+          "columns": { "desktop": 3, "tablet": 2, "mobile": 1 },
+          "gap": { "token": "space.md" },
+          "items": [
+            {
+              "title": "Responsive by construction",
+              "body": "Column counts are per breakpoint. The renderer emits mobile as the base rule and larger breakpoints as min-width overrides."
+            },
+            {
+              "title": "Tokens, not values",
+              "body": "A setting holds { token: 'brand.primary' }, never a hex code. That is what lets one component render on-brand for every client."
+            },
+            {
+              "title": "Unknown types degrade",
+              "body": "A component this runtime does not recognise renders nothing and logs a warning. The rest of the page is unaffected."
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_cols",
+        "type": "columns",
+        "settings": {
+          "count": { "desktop": 2, "mobile": 1 },
+          "gap": { "token": "space.md" },
+          "align": "start"
+        },
+        "children": [
+          {
+            "id": "n_colone",
+            "type": "richText",
+            "settings": {
+              "body": "Columns is a layout container. It accepts children, which most components deliberately do not — the manifest decides, so a document cannot smuggle children into a component that has no place to put them.",
+              "maxWidth": "full"
+            }
+          },
+          {
+            "id": "n_coltwo",
+            "type": "richText",
+            "settings": {
+              "body": "Nesting is how a merchant composes a page. There is no free canvas and no absolute positioning: structure comes from containers, which is what keeps a page mobile-safe without anyone checking.",
+              "maxWidth": "full"
+            }
+          }
+        ]
+      },
+      {
+        "id": "n_video",
+        "type": "videoEmbed",
+        "settings": {
+          "provider": "youtube",
+          "videoId": "aqz-KE-bpKQ",
+          "title": "Sample video embed",
+          "nocookie": true,
+          "modestbranding": true,
+          "relatedVideos": false,
+          "aspect": "16:9"
+        }
+      },
+      {
+        "id": "n_hidden",
+        "type": "richText",
+        "settings": {
+          "body": "This paragraph is hidden on mobile via hideOn. Narrow your browser below 768px and it disappears — the renderer emits a bounded media query for exactly that breakpoint, so tablet and desktop are unaffected.",
+          "maxWidth": "prose",
+          "hideOn": ["mobile"]
+        }
+      },
+      {
+        "id": "n_raw",
+        "type": "rawHtml",
+        "settings": {
+          "html": "<h3>Custom HTML escape hatch</h3><p>This block came through <code>rawHtml</code> and was sanitised on render. A <code>&lt;script&gt;</code> tag, an <code>onclick</code> attribute and a non-video <code>&lt;iframe&gt;</code> were all included in the source and none of them survived.</p><script>alert('this must never run')</script><div onclick=\"alert('nor this')\">This div kept its text but lost its handler.</div><iframe src=\"https://example.com/not-allowed\"></iframe>"
+        }
+      },
+      {
+        "id": "n_carousel",
+        "type": "productCarousel",
+        "settings": {
+          "heading": "Product carousel — empty state",
+          "limit": 8
+        }
+      },
+      {
+        "id": "n_future",
+        "type": "componentFromTheFuture",
+        "settings": {
+          "note": "This type is not registered. It renders nothing and logs a warning — the page around it is untouched."
+        }
+      },
+      {
+        "id": "n_cta",
+        "type": "ctaBand",
+        "settings": {
+          "heading": "That is the whole built-in library",
+          "buttonLabel": "Back to the store",
+          "buttonHref": "/",
+          "background": { "token": "brand.accent" },
+          "padding": { "token": "space.lg" }
+        }
+      }
+    ]
+  }
+}
