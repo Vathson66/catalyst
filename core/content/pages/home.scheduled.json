@@ -4,7 +4,7 @@
   "kind": "page",
   "slug": "/home",
   "title": "Fall masonry campaign",
-  "activeFrom": "2026-08-16T19:28:31Z",
+  "activeFrom": "2026-08-16T19:39:49Z",
   "tree": {
     "id": "n_root",
     "type": "section",
@@ -34,7 +34,7 @@
         "type": "richText",
         "settings": {
           "maxWidth": "prose",
-          "body": "The deploy that shipped this file happened before activeFrom passed. Nothing ran at go-live.\n\nactiveFrom was 2026-08-16T19:28:31Z."
+          "body": "The deploy that shipped this file completed before activeFrom passed. Nothing ran at go-live.\n\nactiveFrom was 2026-08-16T19:39:49Z."
         }
       }
     ]
