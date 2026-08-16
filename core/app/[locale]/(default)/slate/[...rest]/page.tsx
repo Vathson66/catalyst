@@ -1,10 +1,12 @@
 import { notFound } from 'next/navigation';
 
 import {
+  collectDataRequests,
   createBuiltinRegistry,
   createEnvironment,
   emptyDataSource,
   RenderPage,
+  resolvePageData,
   SlateBaseStyles,
   SlateTokens,
 } from '@integer/slate-runtime';
@@ -58,6 +60,16 @@ export default async function SlatePage({ params }: { params: Promise<PageParams
 
   if (!document) notFound();
 
+  // Components declare their data needs in their manifests; the runtime resolves everything in
+  // one parallel pass. This is the only await in the render path -- everything after it is
+  // synchronous, which is what lets the Slate canvas render the identical tree client-side.
+  const requests = collectDataRequests(document, registry);
+  const data = await resolvePageData(requests, env.dataSource);
+
+  for (const { request, error } of data.failures) {
+    console.error('[slate] data request failed', { slug, request, error });
+  }
+
   return (
     <>
       {/* The client's brand, as CSS custom properties. Scoped to :root so nested nodes inherit. */}
@@ -65,7 +77,7 @@ export default async function SlatePage({ params }: { params: Promise<PageParams
       {/* Baseline presentation for the built-in components — every value falls back, so this
           renders coherently even before tokens exist. */}
       <SlateBaseStyles />
-      <RenderPage document={document} env={env} />
+      <RenderPage document={document} env={env} data={data} />
     </>
   );
 }
