@@ -13,7 +13,9 @@
     "type": "section",
     "settings": {
       "maxWidth": "full",
-      "padding": { "token": "space.none" }
+      "padding": {
+        "token": "space.none"
+      }
     },
     "children": [
       {
@@ -21,8 +23,17 @@
         "type": "section",
         "settings": {
           "maxWidth": "contained",
-          "padding": { "desktop": { "token": "space.xl" }, "mobile": { "token": "space.md" } },
-          "background": { "token": "brand.primary" }
+          "padding": {
+            "desktop": {
+              "token": "space.xl"
+            },
+            "mobile": {
+              "token": "space.md"
+            }
+          },
+          "background": {
+            "token": "brand.primary"
+          }
         },
         "children": [
           {
@@ -31,7 +42,9 @@
             "settings": {
               "heading": "Sealed for good.",
               "subheading": "Breathable protective treatments for masonry, concrete and natural stone. Specified by architects, trusted on site.",
-              "headingType": { "token": "type.display" },
+              "headingType": {
+                "token": "type.display"
+              },
               "align": "center"
             }
           },
@@ -42,7 +55,9 @@
               "heading": "",
               "buttonLabel": "Browse the range",
               "buttonHref": "/",
-              "padding": { "token": "space.md" }
+              "padding": {
+                "token": "space.md"
+              }
             }
           }
         ]
@@ -52,7 +67,14 @@
         "type": "section",
         "settings": {
           "maxWidth": "contained",
-          "padding": { "desktop": { "token": "space.xl" }, "mobile": { "token": "space.md" } }
+          "padding": {
+            "desktop": {
+              "token": "space.xl"
+            },
+            "mobile": {
+              "token": "space.md"
+            }
+          }
         },
         "children": [
           {
@@ -60,8 +82,14 @@
             "type": "featureGrid",
             "settings": {
               "heading": "Why specifiers choose it",
-              "columns": { "desktop": 3, "tablet": 2, "mobile": 1 },
-              "gap": { "token": "space.lg" },
+              "columns": {
+                "desktop": 3,
+                "tablet": 2,
+                "mobile": 1
+              },
+              "gap": {
+                "token": "space.lg"
+              },
               "items": [
                 {
                   "title": "Breathable",
@@ -97,8 +125,12 @@
         "type": "section",
         "settings": {
           "maxWidth": "narrow",
-          "padding": { "token": "space.xl" },
-          "background": { "token": "neutral.light" }
+          "padding": {
+            "token": "space.xl"
+          },
+          "background": {
+            "token": "neutral.light"
+          }
         },
         "children": [
           {
@@ -107,7 +139,9 @@
             "settings": {
               "body": "\"We had spalling on the north elevation within two winters of the previous treatment. Four years after switching, the same elevation is unchanged.\"\n\nThe difference is penetration depth. A surface film fails at the first freeze-thaw cycle that gets behind it; a penetrating treatment has nothing to lift.",
               "maxWidth": "prose",
-              "textType": { "token": "type.body" }
+              "textType": {
+                "token": "type.body"
+              }
             }
           }
         ]
@@ -117,7 +151,9 @@
         "type": "section",
         "settings": {
           "maxWidth": "contained",
-          "padding": { "token": "space.xl" }
+          "padding": {
+            "token": "space.xl"
+          }
         },
         "children": [
           {
@@ -125,7 +161,13 @@
             "type": "productCarousel",
             "settings": {
               "heading": "Popular in this range",
-              "limit": 8
+              "limit": 8,
+              "category": {
+                "ref": {
+                  "kind": "category",
+                  "id": "98"
+                }
+              }
             }
           }
         ]
@@ -135,8 +177,12 @@
         "type": "section",
         "settings": {
           "maxWidth": "contained",
-          "padding": { "token": "space.xl" },
-          "background": { "token": "brand.accent" }
+          "padding": {
+            "token": "space.xl"
+          },
+          "background": {
+            "token": "brand.accent"
+          }
         },
         "children": [
           {
@@ -146,7 +192,9 @@
               "heading": "Not sure which product the substrate needs?",
               "buttonLabel": "Talk to a specifier",
               "buttonHref": "/",
-              "padding": { "token": "space.md" }
+              "padding": {
+                "token": "space.md"
+              }
             }
           }
         ]
