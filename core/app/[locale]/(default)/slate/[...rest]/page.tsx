@@ -11,6 +11,7 @@ import {
   SlateTokens,
 } from '@integer/slate-runtime';
 
+import { makeCatalystDataSource } from '~/lib/slate/data-source';
 import { loadLayoutForPath } from '~/lib/slate/load-layout';
 import { loadTokens } from '~/lib/slate/tokens';
 
@@ -33,11 +34,11 @@ export const dynamic = 'force-dynamic';
 
 const registry = createBuiltinRegistry();
 
-// The scheduling proof needs no commerce data, so the data source is the empty one. Wiring the
-// real BigCommerce implementation is a separate step and a separate risk.
+// Real BigCommerce. The Slate canvas reads the same catalogue through its own implementation,
+// so what a merchant approves in the builder is what a shopper gets (ADR 14).
 const env = createEnvironment({
   registry,
-  dataSource: emptyDataSource,
+  dataSource: makeCatalystDataSource(),
   onWarning: (event) => console.warn('[slate]', event.message, event),
 });
 
