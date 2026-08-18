@@ -4,7 +4,6 @@ import {
   collectDataRequests,
   createBuiltinRegistry,
   createEnvironment,
-  emptyDataSource,
   RenderPage,
   resolvePageData,
   SlateBaseStyles,
