@@ -1,3 +1,5 @@
+import { loadRepoBlogPosts } from './blog';
+
 import type {
   BlogPostSummary,
   CategorySummary,
@@ -82,6 +84,39 @@ const toProduct = ({ node }: { node: ProductNode }): ProductSummary => ({
   imageAssetId: node.defaultImage?.url,
 });
 
+async function fetchBcBlogPosts(limit: number): Promise<BlogPostSummary[]> {
+  interface PostNode {
+    entityId: number;
+    name: string;
+    path: string;
+    plainTextSummary?: string;
+    publishedDate?: { utc: string };
+  }
+
+  const data = await gql<{
+    site: { content: { blog: { posts: { edges: Array<{ node: PostNode }> } } | null } };
+  }>(
+    `query SlateBlogPosts($first: Int!) {
+      site { content { blog { posts(first: $first) {
+        edges { node {
+          entityId name path
+          plainTextSummary(characterLimit: 180)
+          publishedDate { utc }
+        } }
+      } } } }
+    }`,
+    { first: limit },
+  );
+
+  return (data?.site.content.blog?.posts.edges ?? []).map(({ node }) => ({
+    id: String(node.entityId),
+    title: node.name,
+    path: node.path,
+    excerpt: node.plainTextSummary,
+    publishedAt: node.publishedDate?.utc,
+  }));
+}
+
 export function makeCatalystDataSource(): SlateDataSource {
   return {
     async getProducts({ categoryId, limit = 8 }): Promise<ProductSummary[]> {
@@ -131,36 +166,13 @@ export function makeCatalystDataSource(): SlateDataSource {
     },
 
     async getBlogPosts({ limit = 6 }): Promise<BlogPostSummary[]> {
-      interface PostNode {
-        entityId: number;
-        name: string;
-        path: string;
-        plainTextSummary?: string;
-        publishedDate?: { utc: string };
-      }
+      // Slate-authored posts (repo) merge with anything still in BigCommerce (ADR 26: import
+      // once, then Slate owns them) — newest first, so migration happens one article at a time.
+      const [own, bc] = await Promise.all([loadRepoBlogPosts(limit), fetchBcBlogPosts(limit)]);
 
-      const data = await gql<{
-        site: { content: { blog: { posts: { edges: Array<{ node: PostNode }> } } | null } };
-      }>(
-        `query SlateBlogPosts($first: Int!) {
-          site { content { blog { posts(first: $first) {
-            edges { node {
-              entityId name path
-              plainTextSummary(characterLimit: 180)
-              publishedDate { utc }
-            } }
-          } } } }
-        }`,
-        { first: limit },
-      );
-
-      return (data?.site.content.blog?.posts.edges ?? []).map(({ node }) => ({
-        id: String(node.entityId),
-        title: node.name,
-        path: node.path,
-        excerpt: node.plainTextSummary,
-        publishedAt: node.publishedDate?.utc,
-      }));
+      return [...own, ...bc]
+        .sort((a, b) => (b.publishedAt ?? '').localeCompare(a.publishedAt ?? ''))
+        .slice(0, limit);
     },
 
     /**

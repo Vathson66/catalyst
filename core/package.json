@@ -24,7 +24,7 @@
     "@conform-to/react": "^1.6.1",
     "@conform-to/zod": "^1.6.1",
     "@icons-pack/react-simple-icons": "^11.2.0",
-    "@integer/slate-runtime": "file:../vendor/integer-slate-runtime-0.3.0-0b1a6ac3.tgz",
+    "@integer/slate-runtime": "file:../vendor/integer-slate-runtime-0.5.0-0b3afcc0.tgz",
     "@makeswift/runtime": "0.26.4",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/api-logs": "^0.208.0",

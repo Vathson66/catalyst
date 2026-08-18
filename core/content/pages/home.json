@@ -3,42 +3,140 @@
   "id": "page_home",
   "kind": "page",
   "slug": "/home",
-  "title": "Integer Slate — live layout",
+  "title": "PROSOCO — where building meets science",
+  "seo": {
+    "title": "PROSOCO | Where building meets science",
+    "description": "Cleaners, protective treatments and restoration products for the built environment, trusted since 1939."
+  },
+  "activeFrom": null,
   "tree": {
     "id": "n_root",
     "type": "section",
-    "settings": {
-      "maxWidth": "contained",
-      "padding": { "token": "space.lg" }
-    },
+    "settings": { "maxWidth": "full", "padding": { "token": "space.none" } },
     "children": [
       {
-        "id": "n_hero",
-        "type": "hero",
+        "id": "n_hb1",
+        "type": "section",
         "settings": {
-          "heading": "BASE PAGE — where building meets science",
-          "subheading": "This is content/pages/home.json. It renders because the file exists in the repo, with nothing fetched from Integer infrastructure.",
-          "background": { "token": "brand.primary" },
+          "maxWidth": "contained",
+          "padding": { "desktop": { "token": "space.xl" }, "mobile": { "token": "space.md" } },
+          "background": { "token": "brand.secondary" }
+        },
+        "children": [
+          {
+            "id": "n_hero",
+            "type": "hero",
+            "settings": {
+              "heading": "Where building meets science.",
+              "subheading": "Cleaners, protective treatments and restoration products for the built environment — specified by architects, proven on site since 1939.",
+              "headingType": { "token": "type.display" },
+              "align": "center"
+            }
+          }
+        ]
+      },
+      {
+        "id": "n_hb2",
+        "type": "section",
+        "settings": {
+          "maxWidth": "contained",
           "padding": { "token": "space.lg" }
-        }
+        },
+        "children": [
+          {
+            "id": "n_stats",
+            "type": "statBand",
+            "settings": {
+              "columns": { "desktop": 4, "tablet": 2, "mobile": 2 },
+              "items": [
+                { "value": "1939", "label": "Founded in Kansas" },
+                { "value": "300+", "label": "Products in the range" },
+                { "value": "50", "label": "States supplied" },
+                { "value": "10yr", "label": "Performance warranty" }
+              ]
+            }
+          }
+        ]
       },
       {
-        "id": "n_body",
-        "type": "richText",
+        "id": "n_hb3",
+        "type": "section",
         "settings": {
-          "body": "If a scheduled variant of this page exists and its activeFrom has passed, the storefront will render that instead — with no deploy and no builder involved.\n\nThat swap is the whole point of Phase 3.",
-          "maxWidth": "prose"
-        }
+          "maxWidth": "contained",
+          "padding": { "desktop": { "token": "space.xl" }, "mobile": { "token": "space.md" } },
+          "background": { "token": "neutral.light" }
+        },
+        "children": [
+          {
+            "id": "n_split",
+            "type": "imageText",
+            "settings": {
+              "heading": "Hard surfaces, kept honest",
+              "body": "Masonry breathes, concrete cures, stone weathers. Our chemistry works with those facts rather than sealing them under a film — which is why the north elevation still looks right after its fourth winter.\n\nEvery product ships with the safety data and coverage tables your specifier needs.",
+              "imageSide": "right",
+              "gap": { "token": "space.lg" }
+            }
+          }
+        ]
       },
       {
-        "id": "n_cta",
-        "type": "ctaBand",
+        "id": "n_hb4",
+        "type": "section",
+        "settings": { "maxWidth": "contained", "padding": { "token": "space.xl" } },
+        "children": [
+          {
+            "id": "n_range",
+            "type": "productCarousel",
+            "settings": {
+              "heading": "Hard Surface Care — top sellers",
+              "limit": 8,
+              "category": { "ref": { "kind": "category", "id": "98" } }
+            }
+          }
+        ]
+      },
+      {
+        "id": "n_hb5",
+        "type": "section",
         "settings": {
-          "heading": "Rendered by @integer/slate-runtime",
-          "buttonLabel": "Back to store",
-          "buttonHref": "/",
-          "padding": { "token": "space.md" }
-        }
+          "maxWidth": "contained",
+          "padding": { "token": "space.xl" },
+          "background": { "token": "neutral.light" }
+        },
+        "children": [
+          {
+            "id": "n_latest",
+            "type": "blogPostList",
+            "settings": {
+              "heading": "Latest from the blog",
+              "limit": 3,
+              "showExcerpt": true,
+              "columns": { "desktop": 3, "tablet": 2, "mobile": 1 },
+              "gap": { "token": "space.lg" }
+            }
+          }
+        ]
+      },
+      {
+        "id": "n_hb6",
+        "type": "section",
+        "settings": {
+          "maxWidth": "contained",
+          "padding": { "token": "space.xl" },
+          "background": { "token": "brand.primary" }
+        },
+        "children": [
+          {
+            "id": "n_cta",
+            "type": "ctaBand",
+            "settings": {
+              "heading": "Not sure which product your substrate needs?",
+              "buttonLabel": "Talk to a specifier",
+              "buttonHref": "/",
+              "padding": { "token": "space.md" }
+            }
+          }
+        ]
       }
     ]
   }

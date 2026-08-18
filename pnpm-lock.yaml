@@ -57,8 +57,8 @@ importers:
         specifier: ^11.2.0
         version: 11.2.0(react@19.1.5)
       '@integer/slate-runtime':
-        specifier: file:../vendor/integer-slate-runtime-0.3.0-0b1a6ac3.tgz
-        version: file:vendor/integer-slate-runtime-0.3.0-0b1a6ac3.tgz(react@19.1.5)
+        specifier: file:../vendor/integer-slate-runtime-0.5.0-0b3afcc0.tgz
+        version: file:vendor/integer-slate-runtime-0.5.0-0b3afcc0.tgz(react@19.1.5)
       '@makeswift/runtime':
         specifier: 0.26.4
         version: 0.26.4(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(next@16.1.6(@babel/core@7.27.4)(@opentelemetry/api@1.9.0)(@playwright/test@1.52.0)(babel-plugin-macros@3.1.0)(react-dom@19.1.5(react@19.1.5))(react@19.1.5))(react-dom@19.1.5(react@19.1.5))(react@19.1.5)
@@ -2475,9 +2475,9 @@ packages:
       '@types/node':
         optional: true
 
-  '@integer/slate-runtime@file:vendor/integer-slate-runtime-0.3.0-0b1a6ac3.tgz':
-    resolution: {integrity: sha512-fWntJF46bZkWk+iEeINMjFV9MXppCfTt/CIEPhk8Yi5y9WtRPmeEIDMgKGMGedaXd8UY683+I7sZ0sK0tj3icw==, tarball: file:vendor/integer-slate-runtime-0.3.0-0b1a6ac3.tgz}
-    version: 0.3.0
+  '@integer/slate-runtime@file:vendor/integer-slate-runtime-0.5.0-0b3afcc0.tgz':
+    resolution: {integrity: sha512-92/tJDdsasg8982gR7OmVIMslM0GeWPumnknLOkkAsM/MpOfiMvjsppTBZFJqBCI5eCpHxpmU05B1guQbyqGMA==, tarball: file:vendor/integer-slate-runtime-0.5.0-0b3afcc0.tgz}
+    version: 0.5.0
     peerDependencies:
       react: '>=18'
 
@@ -13810,7 +13810,7 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.15.30
 
-  '@integer/slate-runtime@file:vendor/integer-slate-runtime-0.3.0-0b1a6ac3.tgz(react@19.1.5)':
+  '@integer/slate-runtime@file:vendor/integer-slate-runtime-0.5.0-0b3afcc0.tgz(react@19.1.5)':
     dependencies:
       react: 19.1.5
       sanitize-html: 2.17.7
@@ -18850,8 +18850,8 @@ snapshots:
       '@typescript-eslint/parser': 8.28.0(eslint@8.57.1)(typescript@5.8.3)
       eslint: 8.57.1
       eslint-import-resolver-node: 0.3.9
-      eslint-import-resolver-typescript: 3.9.1(eslint-plugin-import@2.31.0(@typescript-eslint/parser@8.28.0(eslint@8.57.1)(typescript@5.8.3))(eslint@8.57.1))(eslint@8.57.1)
-      eslint-plugin-import: 2.31.0(@typescript-eslint/parser@8.28.0(eslint@8.57.1)(typescript@5.8.3))(eslint-import-resolver-typescript@3.9.1(eslint-plugin-import@2.31.0(@typescript-eslint/parser@8.28.0(eslint@8.57.1)(typescript@5.8.3))(eslint@8.57.1))(eslint@8.57.1))(eslint@8.57.1)
+      eslint-import-resolver-typescript: 3.9.1(eslint-plugin-import@2.31.0)(eslint@8.57.1)
+      eslint-plugin-import: 2.31.0(@typescript-eslint/parser@8.28.0(eslint@8.57.1)(typescript@5.8.3))(eslint@8.57.1)
       eslint-plugin-jsx-a11y: 6.10.2(eslint@8.57.1)
       eslint-plugin-react: 7.37.4(eslint@8.57.1)
       eslint-plugin-react-hooks: 5.2.0(eslint@8.57.1)
@@ -18904,7 +18904,7 @@ snapshots:
       stable-hash: 0.0.5
       tinyglobby: 0.2.14
     optionalDependencies:
-      eslint-plugin-import: 2.31.0(@typescript-eslint/parser@8.28.0(eslint@8.57.1)(typescript@5.8.3))(eslint-import-resolver-typescript@3.9.1)(eslint@8.57.1)
+      eslint-plugin-import: 2.31.0(@typescript-eslint/parser@8.28.0(eslint@8.57.1)(typescript@5.8.3))(eslint@8.57.1)
     transitivePeerDependencies:
       - supports-color
 
@@ -18981,6 +18981,35 @@ snapshots:
       eslint: 8.57.1
       eslint-import-resolver-node: 0.3.9
       eslint-module-utils: 2.12.0(@typescript-eslint/parser@8.28.0(eslint@8.57.1)(typescript@5.8.3))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.9.1)(eslint@8.57.1)
+      hasown: 2.0.2
+      is-core-module: 2.16.1
+      is-glob: 4.0.3
+      minimatch: 3.1.2
+      object.fromentries: 2.0.8
+      object.groupby: 1.0.3
+      object.values: 1.2.1
+      semver: 6.3.1
+      string.prototype.trimend: 1.0.9
+      tsconfig-paths: 3.15.0
+    optionalDependencies:
+      '@typescript-eslint/parser': 8.28.0(eslint@8.57.1)(typescript@5.8.3)
+    transitivePeerDependencies:
+      - eslint-import-resolver-typescript
+      - eslint-import-resolver-webpack
+      - supports-color
+
+  eslint-plugin-import@2.31.0(@typescript-eslint/parser@8.28.0(eslint@8.57.1)(typescript@5.8.3))(eslint@8.57.1):
+    dependencies:
+      '@rtsao/scc': 1.1.0
+      array-includes: 3.1.8
+      array.prototype.findlastindex: 1.2.6
+      array.prototype.flat: 1.3.3
+      array.prototype.flatmap: 1.3.3
+      debug: 3.2.7
+      doctrine: 2.1.0
+      eslint: 8.57.1
+      eslint-import-resolver-node: 0.3.9
+      eslint-module-utils: 2.12.0(@typescript-eslint/parser@8.28.0(eslint@8.57.1)(typescript@5.8.3))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.9.1(eslint-plugin-import@2.31.0(@typescript-eslint/parser@8.28.0(eslint@8.57.1)(typescript@5.8.3))(eslint@8.57.1))(eslint@8.57.1))(eslint@8.57.1)
       hasown: 2.0.2
       is-core-module: 2.16.1
       is-glob: 4.0.3

@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "1.0",
+  "id": "page_blogindex",
+  "kind": "page",
+  "slug": "/blog",
+  "title": "From the lab and the field",
+  "seo": {
+    "title": "Blog | PROSOCO",
+    "description": "Practical guidance on cleaning, protecting and restoring the built environment."
+  },
+  "tree": {
+    "id": "n_root",
+    "type": "section",
+    "settings": { "maxWidth": "contained", "padding": { "token": "space.lg" } },
+    "children": [
+      {
+        "id": "n_bloghero",
+        "type": "hero",
+        "settings": {
+          "heading": "From the lab and the field",
+          "subheading": "Practical guidance on cleaning, protecting and restoring the built environment — written by the people who make the products.",
+          "headingType": { "token": "type.display" }
+        }
+      },
+      {
+        "id": "n_posts",
+        "type": "blogPostList",
+        "settings": {
+          "limit": 12,
+          "showExcerpt": true,
+          "columns": { "desktop": 3, "tablet": 2, "mobile": 1 },
+          "gap": { "token": "space.lg" }
+        }
+      }
+    ]
+  }
+}
